@@ -1,0 +1,9 @@
+# Results
+results/
+
+# Python caching and environments
+__pycache__/
+*.pyc
+.env
+.venv/
+env/
