@@ -21,7 +21,8 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # Hardware and signal parameters
 FS_ORIGINAL = 32000.0  
 NUM_CHANNELS = 128
-FS_LFP = 300.0    
+FS_LFP = 300.0
+FS_ENVELOPES = 100.0    
 DTYPE = 'float32'     
 
 # Subjects and task definitions
@@ -45,15 +46,16 @@ WALK_CONDITIONS = {
 EPOCH_T_PRE = 1.0   # Seconds before the event
 EPOCH_T_POST = 2.0  # Seconds after the event
 # Baseline period relative to the event (for Z-score normalization or ERD/ERS computation)
-BASELINE_T_START = -1.0
-BASELINE_T_END = -0.5
+BASELINE_T_START = -3.5
+BASELINE_T_END = -2.5
 
 # Frequency bands of interest for LFP
 FREQ_BANDS = {
-    'delta': [1, 4],
-    'theta': [4, 8],
-    'alpha': [8, 12],
-    'beta': [15, 30],
-    'low_gamma': [30, 70],
-    'high_gamma': [70, 150]
+    'delta': (1.0, 4.0),
+    'theta': (4.0, 7.0),
+    'alpha': (7.0, 13.0),
+    'low_beta': (13.0, 22.0),
+    'high_beta': (22.0, 37.0),
+    'low_gamma': (37.0, 60.0),
+    'high_gamma': (60.0, 250.0)
 }
