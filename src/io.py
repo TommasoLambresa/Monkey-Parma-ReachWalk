@@ -1,5 +1,5 @@
 import spikeinterface as si
-from src.config import RAW_DATA_DIR, FS_ORIGINAL, NUM_CHANNELS, DTYPE, INTERIM_DATA_DIR, EVENT_SUFFIXES, PROCESSED_DATA_DIR
+from src.config import RAW_DATA_DIR, FS_ORIGINAL, NUM_CHANNELS, DTYPE, INTERIM_DATA_DIR, EVENT_SUFFIXES, PROCESSED_DATA_DIR, MULTITAPER_PARAMS
 import numpy as np
 import pandas as pd
 
@@ -105,50 +105,21 @@ def load_lfp_recording(subject: str, session: str, folder_name: str) -> si.core.
 
     return si.load(recording_path)
 
-def load_envelopes(subject: str, session: str) -> dict:
-    """
-    Utility function to load the saved envelopes for downstream analyses.
-    """
-    file_path = INTERIM_DATA_DIR / subject / session / "band_envelopes_100Hz.npz"
 
-    if not file_path.exists():
-        raise FileNotFoundError(f"Envelope file not found at {file_path}")
-
-    with np.load(file_path) as data:
-        return {band: data[band] for band in data.files}
-    
-def load_epochs(subject: str, session: str, event_type: str) -> dict:
+def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
     """
-    Loads the normalized epoched tensors and corresponding labels from disk.
-    Returns a dictionary containing the frequency bands and the 'labels' array.
+    Loads the Multitaper epoched tensors, corresponding labels, and frequency vectors from disk.
+    Returns a dictionary containing 'multitaper_tensor', 'labels', and 'freqs'.
     """
-    # Construct the exact path for the processed data
-    file_path = PROCESSED_DATA_DIR / subject / session / f"epoched_{event_type}_zscored.npz"
+    # Construct the exact path for the Multitaper processed data
+    file_path = PROCESSED_DATA_DIR / subject / session / f"epoched_multitaper_{event_type}_{int(MULTITAPER_PARAMS['target_fs'])}Hz_{int(MULTITAPER_PARAMS['window_taper_s']*1000)}ms.npz"
     
     if not file_path.exists():
-        raise FileNotFoundError(f"Epoched data not found at {file_path}")
+        raise FileNotFoundError(f"Multitaper epoched data not found at {file_path}")
         
     # Load the compressed .npz file
     with np.load(file_path, allow_pickle=True) as data:
         # Convert the NpzFile object to a standard Python dictionary to avoid lazy-loading issues
-        epochs_data = {key: data[key] for key in data.files}
+        multitaper_data = {key: data[key] for key in data.files}
         
-    return epochs_data
-
-def load_cwt_epochs(subject: str, session: str, event_type: str) -> dict:
-    """
-    Loads the CWT epoched tensors, corresponding labels, and frequency vectors from disk.
-    Returns a dictionary containing 'cwt_tensor', 'labels', and 'freqs'.
-    """
-    # Construct the exact path for the CWT processed data
-    file_path = PROCESSED_DATA_DIR / subject / session / f"epoched_cwt_{event_type}.npz"
-    
-    if not file_path.exists():
-        raise FileNotFoundError(f"CWT epoched data not found at {file_path}")
-        
-    # Load the compressed .npz file
-    with np.load(file_path, allow_pickle=True) as data:
-        # Convert the NpzFile object to a standard Python dictionary to avoid lazy-loading issues
-        cwt_data = {key: data[key] for key in data.files}
-        
-    return cwt_data
+    return multitaper_data

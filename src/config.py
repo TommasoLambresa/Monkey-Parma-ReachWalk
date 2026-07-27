@@ -21,8 +21,8 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 # Hardware and signal parameters
 FS_ORIGINAL = 32000.0  
 NUM_CHANNELS = 128
-FS_LFP = 300.0
-FS_ENVELOPES = 100.0    
+FS_LFP = 1000.0
+FS_ENVELOPES = 200.0    
 DTYPE = 'float32'     
 
 # Subjects and task definitions
@@ -31,6 +31,7 @@ EVENT_SUFFIXES = {
     'steps': '_Steps.csv',
     'grasp': '_Grasp.csv'
 }
+
 GRASP_CONDITIONS = {
     'hook_L': 1,  # reach up left
     'hook_R': 2,  # reach up right
@@ -43,19 +44,32 @@ WALK_CONDITIONS = {
 }
 
 # Epoching parameters
-EPOCH_T_PRE = 1.0   # Seconds before the event
-EPOCH_T_POST = 2.0  # Seconds after the event
-# Baseline period relative to the event (for Z-score normalization or ERD/ERS computation)
-BASELINE_T_START = -3.5
-BASELINE_T_END = -2.5
+EPOCH_T_PRE = 0.8   # Seconds before the event
+EPOCH_T_POST = 0.0  # Seconds after the event
 
 # Frequency bands of interest for LFP
 FREQ_BANDS = {
     'delta': (1.0, 4.0),
     'theta': (4.0, 7.0),
     'alpha': (7.0, 13.0),
-    'low_beta': (13.0, 22.0),
-    'high_beta': (22.0, 37.0),
-    'low_gamma': (37.0, 60.0),
-    'high_gamma': (60.0, 250.0)
+    'beta': (13.0, 35.0),
+    'gamma': (40.0, 200.0),
 }
+
+# Multitaper parameters for time-frequency analysis
+MULTITAPER_PARAMS = {
+    'time_bandwidth': 3.0,  # 2 tapers     
+    'initial_frequency': 1.0, 
+    'final_frequency': 200.0,
+    'frequency_step': 2.0,
+    'target_fs': 200.0, 
+    'window_taper_s': 0.500,
+    'pad_s': 2.0,
+    'smoothing_window_s': 0.05,  # 50 ms smoothing window 
+}
+
+STATISTICAL_PARAMS = {
+    'alpha': 0.05,  # Significance level for ANOVA and post-hoc tests
+    'bin_size_ms': 100,  # Size of time bins for analysis
+}
+
