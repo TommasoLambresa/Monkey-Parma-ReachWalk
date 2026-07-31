@@ -58,6 +58,13 @@ def inspect_behavior(subject: str, session: str) -> None:
                 surface_counts = df_steps.groupby('WalkNumber')['Surface'].first().value_counts()
                 for surface, count in surface_counts.items():
                     print(f"    - {surface}: {count} walks")
+
+            # Breakdown by Hand
+            if 'Hand' in df_steps.columns:
+                print("  - Steps breakdown by Hand:")
+                hand_counts = df_steps['Hand'].value_counts()
+                for hand, count in hand_counts.items():
+                    print(f"    - {hand}: {count} steps")
     else:
         print("[WALK]\n  - File not found.")
 
@@ -104,7 +111,6 @@ def load_lfp_recording(subject: str, session: str, folder_name: str) -> si.core.
         raise FileNotFoundError(f"Saved recording not found at {recording_path}")
 
     return si.load(recording_path)
-
 
 def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
     """

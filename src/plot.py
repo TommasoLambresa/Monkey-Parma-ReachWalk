@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import ipywidgets as widgets
 from IPython.display import display
 from src.io import load_multitaper_epochs
-from src.config import EPOCH_T_POST, EPOCH_T_PRE
+from src.config import EPOCH_T_POST, EPOCH_T_PRE, FREQ_BANDS
 
 def plot_interactive_multitaper(subject: str, session: str, event_type: str, label_filter: str = None) -> None:
     """
@@ -73,9 +73,12 @@ def plot_interactive_multitaper(subject: str, session: str, event_type: str, lab
             )
 
             # Plot aesthetics
-            ax.axvline(x=0.0, color='black', linestyle='-', linewidth=1.5) 
-            ax.set_ylim(0, 200)
-            ax.set_xlim(-0.8, 0.0)
+            ax.axvline(x=0.0, color='black', linestyle='-', linewidth=1.5)
+            for band_lines in FREQ_BANDS.values():
+                ax.axhline(y=band_lines[0], color='black', linestyle='--', linewidth=1.0)
+                ax.axhline(y=band_lines[1], color='black', linestyle='--', linewidth=1.0)
+            ax.set_ylim(0, 100)
+            ax.set_xlim(-0.8, 0.5)
             # Dynamic title
             filter_str = f" | Filter: '{label_filter}'" if label_filter else " | All Trials"
             ax.set_title(f"Averaged Trials (N={num_trials})", fontweight='bold', fontsize=11)

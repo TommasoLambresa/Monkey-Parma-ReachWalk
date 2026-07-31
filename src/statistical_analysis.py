@@ -15,27 +15,24 @@ def _get_p_val(res_df: pd.DataFrame, source_name: str) -> float:
         return np.nan
     return row['p_unc'].values[0]
 
-def _check_activation(df_ev: pd.DataFrame, n_bins: int, alpha: float) -> bool:
-    """Performs 1 sample t-tests bin-by-bin with Bonferroni correction."""
+def _check_pairwise_diff_tukey(df_base: pd.DataFrame, n_bins: int, alpha: float) -> tuple:
+    """Performs Tukey-Kramer HSD bin-by-bin to evaluate pairwise differences between events."""
+    diff_sh = diff_sf = diff_hf = False
     for b in range(n_bins):
-        pow_ev = df_ev[df_ev['Bin'] == b]['Power'].values
-        if len(pow_ev) > 1:
-            _, p_val = ttest_1samp(pow_ev, 0)
-            if p_val < (alpha / n_bins): # Bonferroni correction
-                return True
-    return False
-
-def _check_pairwise_diff(df_A: pd.DataFrame, df_B: pd.DataFrame, n_bins: int, alpha: float) -> bool:
-    """Performs Welch's t-tests bin-by-bin with Bonferroni correction for unbalanced classes."""
-    for b in range(n_bins):
-        pow_A = df_A[df_A['Bin'] == b]['Power'].values
-        pow_B = df_B[df_B['Bin'] == b]['Power'].values
-        if len(pow_A) > 1 and len(pow_B) > 1:
-            # equal_var=False uses Welch's t-test, essential for extreme imbalances (e.g., 70 vs 7 trials)
-            _, p_val = ttest_ind(pow_A, pow_B, equal_var=False) 
-            if p_val < (alpha / n_bins):
-                return True
-    return False
+        df_b = df_base[df_base['Bin'] == b]
+        # Ensure variance exists and all 3 events are present in the bin for Tukey
+        if df_b['Power'].nunique() > 1 and df_b['Event'].nunique() == 3:
+            try:
+                pt = pg.pairwise_tukey(data=df_b, dv='Power', between='Event')
+                for _, row in pt.iterrows():
+                    if row['p_tukey'] < alpha:
+                        pair = {row['A'], row['B']}
+                        if {'steps', 'grasp_hook'} == pair: diff_sh = True
+                        elif {'steps', 'grasp_floor'} == pair: diff_sf = True
+                        elif {'grasp_hook', 'grasp_floor'} == pair: diff_hf = True
+            except Exception:
+                pass
+    return diff_sh, diff_sf, diff_hf
 
 def analyze_selectivity(subject: str, session: str, label_filter: str = None) -> pd.DataFrame:
     """
@@ -127,7 +124,7 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
         mask_hook  = df_base['Event'] == 'grasp_hook'
         mask_floor = df_base['Event'] == 'grasp_floor'
 
-       # Tracking variables
+        # Tracking variables
         p_int_raw, p_bin_raw = [], []
         channel_results = []
  
@@ -147,65 +144,50 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
                 except Exception:
                     p_interaction = np.nan
                     p_main_bin    = np.nan
-                
-                # STEP B: Post-hoc activations against baseline (0)
-                df_s = df_base[mask_steps]
-                df_h = df_base[mask_hook]
-                df_f = df_base[mask_floor]
-                
-                mod_s = _check_activation(df_s, n_bins, alpha)
-                mod_h = _check_activation(df_h, n_bins, alpha)
-                mod_f = _check_activation(df_f, n_bins, alpha)
 
-                # STEP C: Pairwise differences between events
-                pair_sh_diff = _check_pairwise_diff(df_s, df_h, n_bins, alpha)
-                pair_sf_diff = _check_pairwise_diff(df_s, df_f, n_bins, alpha)
-                pair_hf_diff = _check_pairwise_diff(df_h, df_f, n_bins, alpha)
+                # STEP B: Pairwise differences between events (Post-Hoc via Tukey-Kramer)
+                pair_sh_diff, pair_sf_diff, pair_hf_diff = _check_pairwise_diff_tukey(df_base, n_bins, alpha)
                 
                 # Append raw results
                 p_int_raw.append(p_interaction)
                 p_bin_raw.append(p_main_bin)
                 
                 channel_results.append({
-                    'mod_s': mod_s, 'mod_h': mod_h, 'mod_f': mod_f,
                     'pair_sh_diff': pair_sh_diff, 
                     'pair_sf_diff': pair_sf_diff, 
                     'pair_hf_diff': pair_hf_diff,
                 })
         
-        # 4. FDR CORRECTION (Only on Omnibus tests)
+        # 4. FDR CORRECTION
         _, p_int_fdr, _, _ = multipletests(np.nan_to_num(p_int_raw, nan=1.0), alpha=alpha, method='fdr_bh')
         _, p_bin_fdr, _, _ = multipletests(np.nan_to_num(p_bin_raw, nan=1.0), alpha=alpha, method='fdr_bh')
         
-        # 5. RIGOROUS CLASSIFICATION
+        # 5. RIGOROUS CLASSIFICATION (Relative Tuning)
         for ch in range(num_channels):
             r = channel_results[ch]
-            
-            mod_s, mod_h, mod_f = r['mod_s'], r['mod_h'], r['mod_f']
-            n_mod = sum([mod_s, mod_h, mod_f])
             diff_SH, diff_SF, diff_HF = r['pair_sh_diff'], r['pair_sf_diff'], r['pair_hf_diff']
  
             if p_int_fdr[ch] >= alpha:
-                # Interaction NS: The tasks do not statistically differ.
-                category = 'pan_motor_isotropic' if p_bin_fdr[ch] < alpha else 'non_informative'
+                # Interaction NS: Tasks do not statistically differ in temporal profile.
+                category = 'motor_aspecific' if p_bin_fdr[ch] < alpha else 'non_informative'
             else:
-                # Interaction Sig: Channel discriminates!
-                if n_mod == 0:
-                    category = 'ambiguous'
-                elif n_mod == 1:
-                    if mod_s:   category = 'pure_steps' if (diff_SH and diff_SF) else 'ambiguous'
-                    elif mod_h: category = 'pure_hook'  if (diff_SH and diff_HF) else 'ambiguous'
-                    elif mod_f: category = 'pure_floor' if (diff_SF and diff_HF) else 'ambiguous'
-                elif n_mod == 2:
-                    if mod_s and mod_h:
-                        category = 'mixed_steps_hook_diff' if diff_SH else 'mixed_steps_hook_similar'
-                    elif mod_s and mod_f:
-                        category = 'mixed_steps_floor_diff' if diff_SF else 'mixed_steps_floor_similar'
-                    elif mod_h and mod_f:
-                        category = 'mixed_hook_floor_diff' if diff_HF else 'mixed_hook_floor_similar'
-                elif n_mod == 3:
-                    any_diff = diff_SH or diff_SF or diff_HF
-                    category = 'pan_motor_anisotropic' if any_diff else 'pan_motor_isotropic'
+                # Interaction Sig: Channel discriminates! Assign based strictly on pairwise contrast logic.
+                if diff_SH and diff_SF and not diff_HF:
+                    category = 'steps_specific'  # Steps diverges from both Hook and Floor (which are similar)
+                elif diff_SH and diff_HF and not diff_SF:
+                    category = 'hook_specific'   # Hook diverges from both Steps and Floor (which are similar)
+                elif diff_SF and diff_HF and not diff_SH:
+                    category = 'floor_specific'  # Floor diverges from both Steps and Hook (which are similar)
+                elif diff_SH and diff_SF and diff_HF:
+                    category = 'motor_specific' # All 3 actions are statistically distinct from each other
+                elif diff_SH and not diff_SF and not diff_HF:
+                    category = 'mixed_steps_hook_diff' # Incomplete separation (only S and H differ)
+                elif diff_SF and not diff_SH and not diff_HF:
+                    category = 'mixed_steps_floor_diff'
+                elif diff_HF and not diff_SH and not diff_SF:
+                    category = 'mixed_hook_floor_diff'
+                else:
+                    category = 'ambiguous' # Interaction sig, but Tukey-Kramer post-hocs are too conservative to catch the specific bins
 
             csv_records.append({
                 'Band': band_name,
@@ -214,9 +196,6 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
                 'p_interaction_fdr': p_int_fdr[ch],
                 'p_main_bin_raw': p_bin_raw[ch],
                 'p_main_bin_fdr': p_bin_fdr[ch],
-                'mod_steps': mod_s,
-                'mod_hook':  mod_h,
-                'mod_floor': mod_f,
                 'pair_steps_hook_diff':  diff_SH,
                 'pair_steps_floor_diff': diff_SF,
                 'pair_hook_floor_diff':  diff_HF,
