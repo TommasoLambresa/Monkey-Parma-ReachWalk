@@ -45,7 +45,7 @@ WALK_CONDITIONS = {
 
 # Epoching parameters
 EPOCH_T_PRE = 0.8   # Seconds before the event
-EPOCH_T_POST = 0.0  # Seconds after the event
+EPOCH_T_POST = 0.5  # Seconds after the event
 
 # Frequency bands of interest for LFP
 FREQ_BANDS = {
