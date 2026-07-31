@@ -98,7 +98,7 @@ def plot_interactive_multitaper(subject: str, session: str, event_type: str, lab
     
     display(widgets.HBox([channel_selector, plot_output]))
 
-def plot_population_heatmaps(subject: str, session: str, label_filter: str = None) -> None:
+def plot_population_heatmaps(subject: str, session: str, band: str, label_filter: str = None) -> None:
     """
     Generates 3 heatmaps (Steps, Grasp Hook, Grasp Floor) with independent sorting based on modulation.
     """
@@ -140,18 +140,18 @@ def plot_population_heatmaps(subject: str, session: str, label_filter: str = Non
     time_vector = np.linspace(-EPOCH_T_PRE, EPOCH_T_POST, num_times)
     
     # Operational masks
-    gamma_mask = (freqs >= FREQ_BANDS['gamma'][0]) & (freqs <= FREQ_BANDS['gamma'][1])
+    band_mask = (freqs >= FREQ_BANDS[band][0]) & (freqs <= FREQ_BANDS[band][1])
     time_mod_mask = (time_vector >= -0.8) & (time_vector <= 0.0)
     
-    # Helper: Extracts Gamma power and computes across-trial mean -> Output: (Channels, Time)
-    def get_gamma_mean(tensor):
+    # Helper: Extracts Band power and computes across-trial mean -> Output: (Channels, Time)
+    def get_band_mean(tensor):
         if tensor.shape[0] == 0: return np.zeros((num_channels, num_times))
-        gamma_power = np.mean(tensor[:, gamma_mask, :, :], axis=1)
-        return np.mean(gamma_power, axis=0).T 
+        band_power = np.mean(tensor[:, band_mask, :, :], axis=1)
+        return np.mean(band_power, axis=0).T 
 
-    z_steps = get_gamma_mean(tensor_steps)
-    z_hook = get_gamma_mean(tensor_hook)
-    z_floor = get_gamma_mean(tensor_floor)
+    z_steps = get_band_mean(tensor_steps)
+    z_hook = get_band_mean(tensor_hook)
+    z_floor = get_band_mean(tensor_floor)
     
     # --- 2. GLOBAL FRACTIONAL NORMALIZATION ---
     z_norm_steps = np.zeros_like(z_steps)
@@ -235,7 +235,7 @@ def plot_population_heatmaps(subject: str, session: str, label_filter: str = Non
             
     # Global shared colorbar for the three figures
     cbar = fig.colorbar(im, ax=axes.ravel().tolist(), fraction=0.02, pad=0.08)
-    cbar.set_label("Normalized Gamma Power (a.u.)", fontsize=11)
+    cbar.set_label(f"Normalized {band.capitalize()} Power (a.u.)", fontsize=11)
     
-    plt.suptitle(f"{subject} / {session} | Population Gamma Power", fontsize=16, fontweight='bold')
+    plt.suptitle(f"{subject} / {session} | Population {band.capitalize()} Power", fontsize=16, fontweight='bold')
     plt.show()
