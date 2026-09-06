@@ -27,7 +27,7 @@ subjects = dir(matlab_input_dir);
 subjects = subjects([subjects.isdir]);
 subjects = subjects(~ismember({subjects.name}, {'.', '..'}));
 
-for s = 1:length(subjects)
+for s = 1:length(subjects) %[output:group:76499ba2]
     subject_name = subjects(s).name;
     subject_in_dir = fullfile(matlab_input_dir, subject_name);
     subject_out_dir = fullfile(binary_output_dir, subject_name);
@@ -67,7 +67,7 @@ for s = 1:length(subjects)
         
         % Prevent overwriting existing binary files
         if exist(out_file, 'file')
-            fprintf('Skipping %s: Binary file already exists.\n', session_name);
+            fprintf('Skipping %s: Binary file already exists.\n', session_name); %[output:742af2bd]
             continue;
         end
         
@@ -112,7 +112,7 @@ for s = 1:length(subjects)
         fclose(fid);
         fprintf('Saved binary to: %s\n\n', out_file);
     end
-end
+end %[output:group:76499ba2]
 %%
 %[text] ### Events
 % 1. Inspect subject directories
@@ -153,7 +153,7 @@ for s = 1:length(subjects) %[output:group:195675b7]
             
             out_steps_csv = fullfile(out_events_dir, sprintf('%s_Steps.csv', session_name));
             writetable(steps_table, out_steps_csv);
-            fprintf('Exported Steps table to: %s\n', out_steps_csv); %[output:129f0258] %[output:2bcfe27a]
+            fprintf('Exported Steps table to: %s\n', out_steps_csv); %[output:3fcc73dd] %[output:54ce0dd9] %[output:48664d4e] %[output:38ace119]
         end
         
         % Process Grasp Events (Grasp vectors)
@@ -175,8 +175,27 @@ for s = 1:length(subjects) %[output:group:195675b7]
                 
                 % Parse metadata from variable name (e.g., Evt_Router_Grasp_to_eat_floor_L)
                 parts = strsplit(var_name, '_');
-                hand = parts{end};         % Extracts 'L' or 'R'
-                target = parts{end-1};     % Extracts 'floor' or 'hook'
+                hand_raw = parts{end};         % Extracts 'L' or 'R'
+                raw_target = parts{end-1};     % Extracts 'floor' or 'hook'
+
+                % Standardize target naming to 'floor' or 'hook'
+                switch lower(raw_target)
+                    case {'floor', 'food'}
+                        target = 'floor';
+                    case {'hook', 'foraging'}
+                        target = 'hook';
+                    otherwise
+                        target = raw_target; % Fallback for unexpected labels
+                end
+
+                switch lower(hand_raw)
+                    case {'l', 'ipsi'}
+                        hand = 'L';
+                    case {'r', 'contra'}
+                        hand = 'R';
+                    otherwise
+                        hand = hand_raw; % Fallback for unexpected labels
+                end
                 
                 num_events = length(timestamps);
                 
@@ -193,9 +212,9 @@ for s = 1:length(subjects) %[output:group:195675b7]
             grasp_table = sortrows(grasp_table, 'EventTime');
             
             writetable(grasp_table, out_grasp_csv);
-            fprintf('Exported Unified Grasp table to: %s\n\n', out_grasp_csv);
+            fprintf('Exported Unified Grasp table to: %s\n\n', out_grasp_csv); %[output:25ce2300] %[output:97070ad0]
         elseif exist(out_grasp_csv, 'file')
-            fprintf('Skipping Grasp export: %s already exists.\n\n', session_name); %[output:285ff0be] %[output:83ebf3b4]
+            fprintf('Skipping Grasp export: %s already exists.\n\n', session_name); %[output:28fb0b4f] %[output:785b2f3e]
         end
     end
 end %[output:group:195675b7]
@@ -205,15 +224,30 @@ end %[output:group:195675b7]
 %[metadata:view]
 %   data: {"layout":"inline","rightPanelPercent":21.3}
 %---
-%[output:129f0258]
+%[output:742af2bd]
+%   data: {"dataType":"text","outputData":{"text":"Skipping Router_20211130: Binary file already exists.\nSkipping Router_20220211: Binary file already exists.\nSkipping Wifi_20210618: Binary file already exists.\nSkipping Wifi_20221020: Binary file already exists.\n","truncated":false}}
+%---
+%[output:3fcc73dd]
+%   data: {"dataType":"text","outputData":{"text":"Exported Steps table to: C:\\Users\\tommy\\OneDrive - Scuola Superiore Sant'Anna\\Monkeys Parma\\raw_binary\\Router\\Router_20211130\\Events\\Router_20211130_Steps.csv\n","truncated":false}}
+%---
+%[output:25ce2300]
+%   data: {"dataType":"text","outputData":{"text":"Exported Unified Grasp table to: C:\\Users\\tommy\\OneDrive - Scuola Superiore Sant'Anna\\Monkeys Parma\\raw_binary\\Router\\Router_20211130\\Events\\Router_20211130_Grasp.csv\n\n","truncated":false}}
+%---
+%[output:54ce0dd9]
 %   data: {"dataType":"text","outputData":{"text":"Exported Steps table to: C:\\Users\\tommy\\OneDrive - Scuola Superiore Sant'Anna\\Monkeys Parma\\raw_binary\\Router\\Router_20220211\\Events\\Router_20220211_Steps.csv\n","truncated":false}}
 %---
-%[output:285ff0be]
+%[output:28fb0b4f]
 %   data: {"dataType":"text","outputData":{"text":"Skipping Grasp export: Router_20220211 already exists.\n\n","truncated":false}}
 %---
-%[output:2bcfe27a]
+%[output:48664d4e]
 %   data: {"dataType":"text","outputData":{"text":"Exported Steps table to: C:\\Users\\tommy\\OneDrive - Scuola Superiore Sant'Anna\\Monkeys Parma\\raw_binary\\Wifi\\Wifi_20210618\\Events\\Wifi_20210618_Steps.csv\n","truncated":false}}
 %---
-%[output:83ebf3b4]
+%[output:785b2f3e]
 %   data: {"dataType":"text","outputData":{"text":"Skipping Grasp export: Wifi_20210618 already exists.\n\n","truncated":false}}
+%---
+%[output:38ace119]
+%   data: {"dataType":"text","outputData":{"text":"Exported Steps table to: C:\\Users\\tommy\\OneDrive - Scuola Superiore Sant'Anna\\Monkeys Parma\\raw_binary\\Wifi\\Wifi_20221020\\Events\\Wifi_20221020_Steps.csv\n","truncated":false}}
+%---
+%[output:97070ad0]
+%   data: {"dataType":"text","outputData":{"text":"Exported Unified Grasp table to: C:\\Users\\tommy\\OneDrive - Scuola Superiore Sant'Anna\\Monkeys Parma\\raw_binary\\Wifi\\Wifi_20221020\\Events\\Wifi_20221020_Grasp.csv\n\n","truncated":false}}
 %---
