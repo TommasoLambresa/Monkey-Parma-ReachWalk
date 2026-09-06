@@ -28,9 +28,10 @@ def extract_and_save_lfp(subject, session, n_jobs=1):
         ignore_low_freq_error=True 
     )
 
+    
     # 2. Downsample to an intermediate frequency (e.g., 1000 Hz)
     # Respects Nyquist theorem for the high_gamma band (250 Hz)
-    recording_resampled = spr.resample(recording_bp, resample_rate=FS_LFP)
+    recording_resampled = spr.resample(recording_bp, resample_rate=int(round(FS_LFP)))
 
     # 3. Apply Common Median Reference (CMR) at 1000 Hz
     recording_cmr = spr.common_reference(
