@@ -18,19 +18,19 @@ def extract_and_save_lfp(subject, session, n_jobs=1):
     recording = load_binary_session(subject, session)
     recording_uV = spr.scale(recording, gain=1e6)
     
-    # 1. Bandpass filter (1-250 Hz)
+    # 1. Bandpass filter (1-300 Hz)
     # ignore_low_freq_error=True bypasses the low frequency safety check in SI.
     # The margin is automatically set to 5 seconds.
     recording_bp = spr.bandpass_filter(
         recording_uV, 
         freq_min=1.0, 
-        freq_max=250.0, 
+        freq_max=300.0, 
         ignore_low_freq_error=True 
     )
 
     
     # 2. Downsample to an intermediate frequency (e.g., 1000 Hz)
-    # Respects Nyquist theorem for the high_gamma band (250 Hz)
+    # Respects Nyquist theorem for the high_gamma band (300 Hz)
     recording_resampled = spr.resample(recording_bp, resample_rate=int(round(FS_LFP)))
 
     # 3. Apply Common Median Reference (CMR) at 1000 Hz

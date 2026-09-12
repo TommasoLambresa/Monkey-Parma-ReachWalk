@@ -74,9 +74,6 @@ def plot_interactive_multitaper(subject: str, session: str, event_type: str, lab
 
             # Plot aesthetics
             ax.axvline(x=0.0, color='black', linestyle='-', linewidth=1.5)
-            for band_lines in FREQ_BANDS.values():
-                ax.axhline(y=band_lines[0], color='black', linestyle='--', linewidth=1.0)
-                ax.axhline(y=band_lines[1], color='black', linestyle='--', linewidth=1.0)
             ax.set_ylim(0, 100)
             ax.set_xlim(-0.8, 0.5)
             # Dynamic title
@@ -98,7 +95,7 @@ def plot_interactive_multitaper(subject: str, session: str, event_type: str, lab
     
     display(widgets.HBox([channel_selector, plot_output]))
 
-def plot_population_heatmaps(subject: str, session: str, band: str, label_filter: str = None) -> None:
+def plot_population_heatmaps(subject: str, session: str, band: str, label_filter: str = None, order: bool = False) -> None:
     """
     Generates 3 heatmaps (Steps, Grasp Hook, Grasp Floor) with independent sorting based on modulation.
     """
@@ -171,13 +168,14 @@ def plot_population_heatmaps(subject: str, session: str, band: str, label_filter
         z_norm_floor[ch] = z_floor[ch] / max_val
 
     # --- 3. PLOT CONFIGURATION AND SORTING ---
-    fig, axes = plt.subplots(1, 3, figsize=(18, 7), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(15, 7), sharey=True)
     conditions = [
         ("Steps", z_norm_steps),
         ("Grasp Hook", z_norm_hook),
         ("Grasp Floor", z_norm_floor)
     ]
-    
+
+    steps_order = None
     for ax, (cond_name, z_norm_cond) in zip(axes, conditions):
         
         # Calculate Modulation Score (in the pre-event window [-0.8, 0.0])
@@ -187,10 +185,18 @@ def plot_population_heatmaps(subject: str, session: str, band: str, label_filter
         fac_idx = np.where(scores > 0)[0]
         sup_idx = np.where(scores <= 0)[0]
         
-        # Independent sorting
-        fac_idx_sorted = fac_idx[np.argsort(scores[fac_idx])[::-1]]     # From strong positive down to near zero
-        sup_idx_sorted = sup_idx[np.argsort(np.abs(scores[sup_idx]))]   # From near zero down to strong negative
-        final_order = np.concatenate([fac_idx_sorted, sup_idx_sorted])
+        # Apply shared sorting if flag "order" (steps based) is True otherwise sort independently
+        if order and steps_order is not None:
+            final_order = steps_order
+        else:
+            # Independent sorting
+            fac_idx_sorted = fac_idx[np.argsort(scores[fac_idx])[::-1]]
+            sup_idx_sorted = sup_idx[np.argsort(np.abs(scores[sup_idx]))]
+            final_order = np.concatenate([fac_idx_sorted, sup_idx_sorted])
+            
+            # Save the Steps order for the next iterations
+            if order and cond_name == "Steps":
+                steps_order = final_order
         
         z_sorted = z_norm_cond[final_order, :]
         

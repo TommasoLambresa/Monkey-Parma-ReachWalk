@@ -34,6 +34,169 @@ def _check_pairwise_diff_tukey(df_base: pd.DataFrame, n_bins: int, alpha: float)
                 pass
     return diff_sh, diff_sf, diff_hf
 
+def analyze_event_modulation(subject: str, session: str, label_filter: str = None) -> pd.DataFrame:
+    """
+    Evaluates event-specific temporal modulation for each frequency band using 1-way RM ANOVA.
+    Returns a DataFrame with channels, raw p-values, FDR-corrected p-values, and modulation flags.
+    """
+    bands_dict = FREQ_BANDS
+    target_fs = MULTITAPER_PARAMS['target_fs']
+    window_s = MULTITAPER_PARAMS['window_taper_s']
+    bin_size_ms = STATISTICAL_PARAMS['bin_size_ms']
+    alpha = STATISTICAL_PARAMS['alpha']
+    out_folder = PROCESSED_DATA_DIR / subject / session
+    
+    # 1. LOAD AND MERGE ALL MULTITAPER FILES
+    file_pattern = f"epoched_multitaper_*_{int(target_fs)}Hz_{int(window_s*1000)}ms.npz"
+    npz_files = list(out_folder.glob(file_pattern))
+    
+    if not npz_files:
+        print(f"[ERROR] No files found matching: {file_pattern}")
+        return pd.DataFrame()
+        
+    print(f"[INFO] Found {len(npz_files)} .npz files. Merging...")
+    
+    all_tensors, all_labels = [], []
+    freqs = None
+    
+    for file_path in npz_files:
+        with np.load(file_path, allow_pickle=True) as data:
+            all_tensors.append(data['mt_tensor'])
+            all_labels.append(data['labels'])
+            if freqs is None:
+                freqs = data['freqs']
+                
+    mt_tensor = np.concatenate(all_tensors, axis=0)
+    labels = np.concatenate(all_labels, axis=0)
+    
+    # 2. FILTER AND RE-LABEL INTO 3 ACTIONS
+    if label_filter is not None:
+        filter_mask = np.array([label_filter in str(l) for l in labels])
+        mt_tensor = mt_tensor[filter_mask]
+        labels = labels[filter_mask]
+    
+    new_labels, keep_mask = [], []
+    for lbl in labels:
+        lbl_str = str(lbl).lower()
+        if 'step' in lbl_str:
+            new_labels.append('steps')
+            keep_mask.append(True)
+        elif 'hook' in lbl_str:
+            new_labels.append('grasp_hook')
+            keep_mask.append(True)
+        elif 'floor' in lbl_str and 'step' not in lbl_str:
+            new_labels.append('grasp_floor')
+            keep_mask.append(True)
+        else:
+            keep_mask.append(False)
+            
+    keep_mask = np.array(keep_mask)
+    mt_tensor = mt_tensor[keep_mask]
+    labels = np.array(new_labels)
+    
+    unique, counts = np.unique(labels, return_counts=True)
+    print(f"[INFO] Trials: {dict(zip(unique, counts))}")
+    
+    num_trials, num_freqs, num_times, num_channels = mt_tensor.shape
+    n_samples_per_bin = int((bin_size_ms / 1000.0) * target_fs)
+    n_bins = num_times // n_samples_per_bin
+    csv_records = []
+    
+    # 3. ANALYSIS LOOP (per band)
+    for band_name, target_band in bands_dict.items():
+        print(f"\n{'='*60}")
+        print(f"  {band_name.upper()} band ({target_band[0]}-{target_band[1]} Hz)")
+        print(f"{'='*60}")
+        
+        band_mask = (freqs >= target_band[0]) & (freqs <= target_band[1])
+        power_band = np.mean(mt_tensor[:, band_mask, :, :], axis=1)
+        power_band_trunc = power_band[:, :n_bins * n_samples_per_bin, :]
+        power_binned = power_band_trunc.reshape(num_trials, n_bins, n_samples_per_bin, num_channels).mean(axis=2)
+ 
+        df_base = pd.DataFrame({
+            'Trial': np.repeat(np.arange(num_trials), n_bins),
+            'Event': np.repeat(labels, n_bins),
+            'Bin':   np.tile(np.arange(n_bins), num_trials)
+        })
+        
+        mask_steps = df_base['Event'] == 'steps'
+        mask_hook  = df_base['Event'] == 'grasp_hook'
+        mask_floor = df_base['Event'] == 'grasp_floor'
+
+        p_steps_raw, p_hook_raw, p_floor_raw = [], [], []
+ 
+        for ch in tqdm(range(num_channels), desc="Channels", leave=False):
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                df_base['Power'] = power_binned[:, :, ch].flatten()
+                
+                df_s = df_base[mask_steps]
+                df_h = df_base[mask_hook]
+                df_f = df_base[mask_floor]
+                
+                # 1-way RM ANOVA per event (correction=False avoids Singular Matrix errors on small N)
+                try: 
+                    res_s = pg.rm_anova(dv='Power', within='Bin', subject='Trial', data=df_s, detailed=True, correction=False)
+                    p_s = _get_p_val(res_s, 'Bin')
+                except Exception: p_s = np.nan
+                
+                try: 
+                    res_h = pg.rm_anova(dv='Power', within='Bin', subject='Trial', data=df_h, detailed=True, correction=False)
+                    p_h = _get_p_val(res_h, 'Bin')
+                except Exception: p_h = np.nan
+                
+                try: 
+                    res_f = pg.rm_anova(dv='Power', within='Bin', subject='Trial', data=df_f, detailed=True, correction=False)
+                    p_f = _get_p_val(res_f, 'Bin')
+                except Exception: p_f = np.nan
+                
+                p_steps_raw.append(p_s)
+                p_hook_raw.append(p_h)
+                p_floor_raw.append(p_f)
+                
+        # 4. FDR CORRECTION ACROSS CHANNELS
+        _, p_steps_fdr, _, _ = multipletests(np.nan_to_num(p_steps_raw, nan=1.0), alpha=alpha, method='fdr_bh')
+        _, p_hook_fdr, _, _  = multipletests(np.nan_to_num(p_hook_raw, nan=1.0), alpha=alpha, method='fdr_bh')
+        _, p_floor_fdr, _, _ = multipletests(np.nan_to_num(p_floor_raw, nan=1.0), alpha=alpha, method='fdr_bh')
+        
+        # 5. RECORD RESULTS
+        for ch in range(num_channels):
+            is_mod_steps = p_steps_fdr[ch] < alpha
+            is_mod_hook  = p_hook_fdr[ch] < alpha
+            is_mod_floor = p_floor_fdr[ch] < alpha
+            
+            csv_records.append({
+                'Band': band_name,
+                'Channel': ch,
+                'p_raw_steps': p_steps_raw[ch],
+                'p_fdr_steps': p_steps_fdr[ch],
+                'is_modulated_steps': is_mod_steps,
+                'p_raw_hook': p_hook_raw[ch],
+                'p_fdr_hook': p_hook_fdr[ch],
+                'is_modulated_hook': is_mod_hook,
+                'p_raw_floor': p_floor_raw[ch],
+                'p_fdr_floor': p_floor_fdr[ch],
+                'is_modulated_floor': is_mod_floor
+            })
+            
+        # Console Summary
+        print(f"\n  Modulated Channels (FDR < {alpha}):")
+        print(f"    - Steps: {np.sum(np.array(p_steps_fdr) < alpha)}")
+        print(f"    - Grasp Hook: {np.sum(np.array(p_hook_fdr) < alpha)}")
+        print(f"    - Grasp Floor: {np.sum(np.array(p_floor_fdr) < alpha)}")
+   
+    # 6. SAVE MASTER CSV
+    out_path = out_folder / "event_modulation_results.csv"
+    
+    if csv_records:
+        df_out = pd.DataFrame(csv_records)
+        df_out.to_csv(out_path, index=False)
+        print(f"\n[INFO] Event modulation results saved to:\n{out_path}")
+        return df_out
+    else:
+        print(f"\n[WARNING] No records found.")
+        return pd.DataFrame()
+    
 def analyze_selectivity(subject: str, session: str, label_filter: str = None) -> pd.DataFrame:
     """
     Strict Mixed ANOVA approach for 3 motor actions.
@@ -100,6 +263,7 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
     num_trials, num_freqs, num_times, num_channels = mt_tensor.shape
     n_samples_per_bin = int((bin_size_ms / 1000.0) * target_fs)
     n_bins = num_times // n_samples_per_bin
+    n_bins_800ms = int(800 / bin_size_ms)
     csv_records = []
     
     # 3. ANALYSIS LOOP (per band)
@@ -113,11 +277,12 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
         power_band_trunc = power_band[:, :n_bins * n_samples_per_bin, :]
         power_binned = power_band_trunc.reshape(num_trials, n_bins, n_samples_per_bin, num_channels).mean(axis=2)
  
-        # Pre-build base DataFrame
+        # Keep only the premovement phase
+        power_binned = power_binned[:, :n_bins_800ms, :]
         df_base = pd.DataFrame({
-            'Trial': np.repeat(np.arange(num_trials), n_bins),
-            'Event': np.repeat(labels, n_bins),
-            'Bin':   np.tile(np.arange(n_bins), num_trials)
+            'Trial': np.repeat(np.arange(num_trials), n_bins_800ms),
+            'Event': np.repeat(labels, n_bins_800ms),
+            'Bin':   np.tile(np.arange(n_bins_800ms), num_trials)
         })
         
         mask_steps = df_base['Event'] == 'steps'
@@ -146,7 +311,7 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
                     p_main_bin    = np.nan
 
                 # STEP B: Pairwise differences between events (Post-Hoc via Tukey-Kramer)
-                pair_sh_diff, pair_sf_diff, pair_hf_diff = _check_pairwise_diff_tukey(df_base, n_bins, alpha)
+                pair_sh_diff, pair_sf_diff, pair_hf_diff = _check_pairwise_diff_tukey(df_base, n_bins_800ms, alpha)
                 
                 # Append raw results
                 p_int_raw.append(p_interaction)

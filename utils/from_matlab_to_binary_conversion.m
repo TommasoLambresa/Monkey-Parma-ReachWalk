@@ -188,6 +188,7 @@ for s = 1:length(subjects) %[output:group:195675b7]
                         target = raw_target; % Fallback for unexpected labels
                 end
 
+                %% TO BE 
                 switch lower(hand_raw)
                     case {'l', 'ipsi'}
                         hand = 'L';
