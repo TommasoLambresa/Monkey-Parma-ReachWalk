@@ -164,7 +164,7 @@ def extract_multitaper_epochs(subject: str, session: str, event_type: str = 'gra
     # Save output
     out_folder = PROCESSED_DATA_DIR / subject / session
     out_folder.mkdir(parents=True, exist_ok=True)
-    out_path = out_folder / f"epoched_notouch_multitaper_{event_type}_{int(target_fs)}Hz_{int(MULTITAPER_PARAMS['window_taper_s']*1000)}ms.npz"
+    out_path = out_folder / f"epoched_multitaper_{event_type}_{int(target_fs)}Hz_{int(MULTITAPER_PARAMS['window_taper_s']*1000)}ms.npz"
     
     np.savez_compressed(
         out_path, 
