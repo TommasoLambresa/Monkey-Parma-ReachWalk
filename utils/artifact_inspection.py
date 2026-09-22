@@ -62,7 +62,7 @@ def inspect_artifacts(subject: str, session: str, event_type: str = 'grasp', off
     lines = []
     for a in range(4):
         ax = axes[a]
-        ax.set_title(f"Array {a+1} (Ch {a*32} - {a*32+31})", loc='left', fontsize=10)
+        ax.set_title(f"Array {a+1} (channels k ≡ {a} mod 4)", loc='left', fontsize=10)
         ax.set_yticks([]) # Hide Y-axis as it's offset-based
         ax.axvline(0, color='red', linestyle='--', linewidth=1)
         
@@ -113,7 +113,9 @@ def inspect_artifacts(subject: str, session: str, event_type: str = 'grasp', off
         
         for a in range(4):
             for ch in range(32):
-                global_ch = a * 32 + ch
+                # Array a owns channels k = 4*m + a (interleaved hardware mapping),
+                # ch is the within-array sequence index m.
+                global_ch = 4 * ch + a
                 trace = data_window[:, global_ch]
                 
                 # Zero-center the trace and add fixed spatial offset
