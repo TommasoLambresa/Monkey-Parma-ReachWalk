@@ -220,23 +220,48 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
     
     all_tensors, all_labels = [], []
     freqs = None
-    
+    ref_normalization = ref_robust = ref_mu = ref_sigma = None
+
     for file_path in npz_files:
         with np.load(file_path, allow_pickle=True) as data:
             all_tensors.append(data['mt_tensor'])
             all_labels.append(data['labels'])
             if freqs is None:
                 freqs = data['freqs']
-                
+
+            # Every event type of a session must share the same normalisation reference
+            # (T-04b): otherwise a leftover per-event mu/sigma mismatch would look like a
+            # small, constant power offset between classes in the between-class tests below.
+            file_normalization = str(data['normalization'])
+            file_robust = bool(data['robust'])
+            file_mu = data['mu']
+            file_sigma = data['sigma']
+            if ref_normalization is None:
+                ref_normalization, ref_robust, ref_mu, ref_sigma = (
+                    file_normalization, file_robust, file_mu, file_sigma
+                )
+            elif not (
+                file_normalization == ref_normalization
+                and file_robust == ref_robust
+                and np.array_equal(file_mu, ref_mu)
+                and np.array_equal(file_sigma, ref_sigma)
+            ):
+                raise ValueError(
+                    f"{file_path.name} was normalised differently from the other .npz "
+                    f"files of {subject}/{session} (normalization/robust/mu/sigma do not "
+                    f"match). Re-run stage 3 (extract_multitaper_epochs) for every event "
+                    f"type of this session so they share the same session-level reference."
+                )
+
     mt_tensor = np.concatenate(all_tensors, axis=0)
     labels = np.concatenate(all_labels, axis=0)
-    
+
     # 2. FILTER AND RE-LABEL INTO 3 ACTIONS
     if label_filter is not None:
         filter_mask = np.array([label_filter in str(l) for l in labels])
         mt_tensor = mt_tensor[filter_mask]
         labels = labels[filter_mask]
-    
+
     new_labels = []
     keep_mask = []
     for lbl in labels:

@@ -65,7 +65,9 @@ MULTITAPER_PARAMS = {
     'target_fs': 200.0, 
     'window_taper_s': 0.500,
     'pad_s': 2.0,
-    'smoothing_window_s': 0.05,  # 50 ms smoothing window 
+    'smoothing_window_s': 0.05,  # 50 ms smoothing window
+    'N_REFERENCE_WINDOWS': 500,  # windows used to estimate the session-level mu/sigma (see extract_multitaper_epochs)
+    'NORMALIZATION_SEED': 42,  # fixes the reference-window draw so it is identical across event types of a session
 }
 
 STATISTICAL_PARAMS = {
