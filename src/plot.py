@@ -3,35 +3,38 @@ import matplotlib.pyplot as plt
 import ipywidgets as widgets
 from IPython.display import display
 from src.io import load_multitaper_epochs
-from src.config import EPOCH_T_POST, EPOCH_T_PRE, FREQ_BANDS
+from src.config import FREQ_BANDS
 
-def plot_interactive_multitaper(subject: str, session: str, event_type: str, label_filter: str = None) -> None:
+def plot_interactive_multitaper(subject: str, session: str, event_type: str, hand: str | None = 'contra') -> None:
     """
     Renders an interactive Time-Frequency Representation (Spectrogram) of the Multitaper data.
-    Uses a scrollable list for channel selection. Displays a grid comparing all unique labels.
+    Uses a scrollable list for channel selection.
+
+    hand : {'contra', 'ipsi', None}, default 'contra'
+        Keeps only trials whose Hand is contralateral / ipsilateral to the implanted
+        hemisphere, or all trials if None.
     """
-    
+
     try:
         multitaper_dict = load_multitaper_epochs(subject, session, event_type)
     except Exception as e:
         print(f"Error loading data: {e}")
         return
-        
-    mt_tensor = multitaper_dict['mt_tensor']  
-    labels = multitaper_dict['labels']
+
+    mt_tensor = multitaper_dict['mt_tensor']
+    trials = multitaper_dict['trials']
     freqs = multitaper_dict['freqs']
-    
-    if label_filter is not None:
-        filter_mask = np.array([label_filter in str(l) for l in labels])
-        mt_tensor = mt_tensor[filter_mask]
-        labels = labels[filter_mask]
+    time_vector = multitaper_dict['times_s']
+
+    if hand is not None:
+        keep = trials['is_contralateral'] if hand == 'contra' else ~trials['is_contralateral']
+        mt_tensor = mt_tensor[keep.values]
+        trials = trials[keep.values].reset_index(drop=True)
 
     num_trials, num_freqs, num_times, num_channels = mt_tensor.shape
-    
-    time_vector = np.linspace(-EPOCH_T_PRE, EPOCH_T_POST, num_times)
 
     if num_trials == 0:
-        print(f"No trial found for '{label_filter}'.")
+        print(f"No trial found for hand='{hand}'.")
         return
 
     # Create a scrollable list (Select widget) for channels
@@ -77,7 +80,7 @@ def plot_interactive_multitaper(subject: str, session: str, event_type: str, lab
             ax.set_ylim(0, 100)
             ax.set_xlim(-0.8, 0.5)
             # Dynamic title
-            filter_str = f" | Filter: '{label_filter}'" if label_filter else " | All Trials"
+            filter_str = f" | Hand: {hand}" if hand else " | All Trials"
             ax.set_title(f"Averaged Trials (N={num_trials})", fontweight='bold', fontsize=11)
             ax.set_ylabel("Frequency (Hz)")
             ax.set_xlabel("Time [s]")
@@ -95,11 +98,15 @@ def plot_interactive_multitaper(subject: str, session: str, event_type: str, lab
     
     display(widgets.HBox([channel_selector, plot_output]))
 
-def plot_population_heatmaps(subject: str, session: str, band: str, label_filter: str = None, order: bool = False) -> None:
+def plot_population_heatmaps(subject: str, session: str, band: str, hand: str | None = 'contra', order: bool = False) -> None:
     """
     Generates 3 heatmaps (Steps, Grasp Hook, Grasp Floor) with independent sorting based on modulation.
+
+    hand : {'contra', 'ipsi', None}, default 'contra'
+        Keeps only trials whose Hand is contralateral / ipsilateral to the implanted
+        hemisphere, or all trials if None.
     """
-    
+
     # --- 1. DATA LOADING ---
     try:
         mt_dict_steps = load_multitaper_epochs(subject, session, 'steps')
@@ -109,33 +116,31 @@ def plot_population_heatmaps(subject: str, session: str, band: str, label_filter
         return
 
     tensor_steps = mt_dict_steps['mt_tensor']
-    labels_steps = mt_dict_steps['labels']
-    
+    trials_steps = mt_dict_steps['trials']
+
     tensor_grasp = mt_dict_grasp['mt_tensor']
-    labels_grasp = mt_dict_grasp['labels']
+    trials_grasp = mt_dict_grasp['trials']
 
-    # Apply label filter if specified
-    if label_filter is not None:
-        filter_mask_steps = np.array([label_filter in str(l) for l in labels_steps])
-        tensor_steps = tensor_steps[filter_mask_steps]
-        labels_steps = labels_steps[filter_mask_steps]
-        
-        filter_mask_grasp = np.array([label_filter in str(l) for l in labels_grasp])
-        tensor_grasp = tensor_grasp[filter_mask_grasp]
-        labels_grasp = labels_grasp[filter_mask_grasp]
+    # Apply the hand filter if specified
+    if hand is not None:
+        keep_steps = trials_steps['is_contralateral'] if hand == 'contra' else ~trials_steps['is_contralateral']
+        tensor_steps = tensor_steps[keep_steps.values]
 
-    mask_hook = np.array(['hook' in str(l).lower() for l in labels_grasp])
-    mask_floor = np.array(['floor' in str(l).lower() for l in labels_grasp])
-    
+        keep_grasp = trials_grasp['is_contralateral'] if hand == 'contra' else ~trials_grasp['is_contralateral']
+        tensor_grasp = tensor_grasp[keep_grasp.values]
+        trials_grasp = trials_grasp[keep_grasp.values].reset_index(drop=True)
+
+    mask_hook = (trials_grasp['action_class'] == 'grasp_hook').values
+    mask_floor = (trials_grasp['action_class'] == 'grasp_floor').values
+
     tensor_hook = tensor_grasp[mask_hook]
     tensor_floor = tensor_grasp[mask_floor]
-    
+
     freqs = mt_dict_steps['freqs']
+    time_vector = mt_dict_steps['times_s']
     num_channels = tensor_steps.shape[3]
     num_times = tensor_steps.shape[2]
-    
-    time_vector = np.linspace(-EPOCH_T_PRE, EPOCH_T_POST, num_times)
-    
+
     # Operational masks
     band_mask = (freqs >= FREQ_BANDS[band][0]) & (freqs <= FREQ_BANDS[band][1])
     time_mod_mask = (time_vector >= -0.8) & (time_vector <= 0.0)

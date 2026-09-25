@@ -108,17 +108,13 @@ def extract_multitaper_epochs(
 
     df_events = pd.read_csv(csv_file)
 
-    # Construct timestamps and labels (No baseline_timestamps needed anymore!)
+    # Only the event time is needed here. Every behavioural property (Hand, Target,
+    # WalkNumber, ...) already lives in this CSV and is joined back in at load time by
+    # src.io.load_multitaper_epochs (T-07) instead of being copied into the .npz.
     if event_type == 'grasp':
         timestamps = df_events['EventTime'].values
-        labels = df_events['Target'].fillna('unknown').astype(str) + "_" + df_events['Hand'].fillna('unknown').astype(str)
-        labels = labels.values
     elif event_type == 'steps':
         timestamps = df_events['StepTime'].values
-        labels = df_events['StepType'].fillna('unknown').astype(str) + "_" + \
-                 df_events['Hand'].fillna('unknown').astype(str) + "_" + \
-                 df_events['Surface'].fillna('unknown').astype(str)
-        labels = labels.values
 
     # Apply manual artifact mask for the current event type's own trials.
     bad_trials_file = PROCESSED_DATA_DIR / subject / session / f"bad_trials_{event_type}.csv"
@@ -126,7 +122,6 @@ def extract_multitaper_epochs(
         df_bad = pd.read_csv(bad_trials_file)
         valid_mask = ~df_bad['is_artifact'].values.astype(bool)
         timestamps = timestamps[valid_mask]
-        labels = labels[valid_mask]
 
     # Session-level artefact exclusion for reference windows: the union over every
     # bad_trials_<event>.csv of this session (currently grasp and steps), read by
@@ -227,9 +222,9 @@ def extract_multitaper_epochs(
         sigma = np.where(sigma == 0, 1.0, sigma)
 
     epoched_multitaper = []
-    valid_labels_pass1 = []
+    event_times_pass1 = []
 
-    for t, label in zip(tqdm(timestamps, desc=f"Processing {event_type} Multitaper", total=len(timestamps)), labels):
+    for t in tqdm(timestamps, desc=f"Processing {event_type} Multitaper", total=len(timestamps)):
         idx = int(t * fs_lfp)
 
         # Boundary check
@@ -248,14 +243,14 @@ def extract_multitaper_epochs(
             trial_norm = (power_epoch_trimmed - mu[:, np.newaxis, :]) / sigma[:, np.newaxis, :]
 
         epoched_multitaper.append(trial_norm)
-        valid_labels_pass1.append(label)
+        event_times_pass1.append(t)
 
     if not epoched_multitaper:
         print("No valid epochs extracted.")
         return
 
     epoched_arr = np.stack(epoched_multitaper)
-    valid_labels_arr = np.array(valid_labels_pass1)
+    event_times_arr = np.array(event_times_pass1)
 
     # Save output
     out_folder = PROCESSED_DATA_DIR / subject / session
@@ -265,7 +260,7 @@ def extract_multitaper_epochs(
     np.savez_compressed(
         out_path,
         mt_tensor=epoched_arr,
-        labels=valid_labels_arr,
+        event_times_s=event_times_arr,
         freqs=freqs,
         normalization=normalization,
         robust=robust,

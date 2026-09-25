@@ -16,6 +16,14 @@ base_dir = "C:\Users\tommy\OneDrive - Scuola Superiore Sant'Anna\Monkeys Parma";
 matlab_input_dir = fullfile(base_dir, 'raw_matlab');
 binary_output_dir = fullfile(base_dir, 'raw_binary');
 
+% Session registry: single source of truth for the implanted hemisphere.
+% No silent fallback if a session is missing or its hemisphere is unknown.
+session_metadata_file = fullfile(base_dir, 'session_metadata.csv');
+if ~exist(session_metadata_file, 'file')
+    error('Session metadata registry not found at %s. Create it before running the converter.', session_metadata_file);
+end
+session_metadata = readtable(session_metadata_file, 'TextType', 'string');
+
 % Processing parameters
 num_channels = 128;
 dtype = 'single'; 
@@ -130,13 +138,31 @@ for s = 1:length(subjects) %[output:group:195675b7]
     
     for sess = 1:length(sessions)
         session_name = sessions(sess).name;
-        
+
         in_events_dir = fullfile(subj_in_dir, session_name, 'Events');
         out_events_dir = fullfile(subj_out_dir, session_name, 'Events');
-        
+
         % Check if Events folder exists in raw data
         if ~exist(in_events_dir, 'dir')
             continue;
+        end
+
+        % Resolve the implanted hemisphere from the registry; refuse to proceed
+        % without it, since it determines the ipsi/contra -> L/R mapping below.
+        session_row = session_metadata(session_metadata.Session == string(session_name), :);
+        if height(session_row) == 0
+            error('Session %s not found in session_metadata.csv. Add it to the registry before converting.', session_name);
+        end
+        hemisphere = upper(strtrim(char(session_row.Hemisphere(1))));
+        if ~ismember(hemisphere, {'L', 'R'})
+            error('Session %s has an unknown Hemisphere ("%s") in session_metadata.csv; expected L or R.', session_name, hemisphere);
+        end
+        if strcmp(hemisphere, 'L')
+            contra_hand = 'R';
+            ipsi_hand = 'L';
+        else
+            contra_hand = 'L';
+            ipsi_hand = 'R';
         end
         
         % Mirror Events directory in raw_binary
@@ -178,24 +204,30 @@ for s = 1:length(subjects) %[output:group:195675b7]
                 hand_raw = parts{end};         % Extracts 'L' or 'R'
                 raw_target = parts{end-1};     % Extracts 'floor' or 'hook'
 
-                % Standardize target naming to 'floor' or 'hook'
+                % Standardize target naming to 'floor' or 'hook'; no unrecognized value
+                % is allowed through, since downstream code assumes only these two.
                 switch lower(raw_target)
                     case {'floor', 'food'}
                         target = 'floor';
                     case {'hook', 'foraging'}
                         target = 'hook';
                     otherwise
-                        target = raw_target; % Fallback for unexpected labels
+                        error('Unrecognized grasp target "%s" in variable %s of session %s.', raw_target, var_name, session_name);
                 end
 
-                %% TO BE 
+                % 'l'/'r' in the source variable name are already anatomical.
+                % 'ipsi'/'contra' depend on the implanted hemisphere (session_metadata.csv).
                 switch lower(hand_raw)
-                    case {'l', 'ipsi'}
+                    case 'l'
                         hand = 'L';
-                    case {'r', 'contra'}
+                    case 'r'
                         hand = 'R';
+                    case 'ipsi'
+                        hand = ipsi_hand;
+                    case 'contra'
+                        hand = contra_hand;
                     otherwise
-                        hand = hand_raw; % Fallback for unexpected labels
+                        error('Unrecognized grasp hand label "%s" in variable %s of session %s.', hand_raw, var_name, session_name);
                 end
                 
                 num_events = length(timestamps);

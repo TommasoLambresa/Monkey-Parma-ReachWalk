@@ -6,7 +6,8 @@ from scipy.stats import ttest_ind, ttest_1samp
 from tqdm import tqdm
 from collections import Counter
 import warnings
-from src.config import (PROCESSED_DATA_DIR, FREQ_BANDS, MULTITAPER_PARAMS, STATISTICAL_PARAMS)
+from src.config import (PROCESSED_DATA_DIR, FREQ_BANDS, MULTITAPER_PARAMS, STATISTICAL_PARAMS, EVENT_SUFFIXES)
+from src.io import load_multitaper_epochs
 
 def _get_p_val(res_df: pd.DataFrame, source_name: str) -> float:
     """Helper to extract uncorrected p-value if available, else uncorrected."""
@@ -34,75 +35,105 @@ def _check_pairwise_diff_tukey(df_base: pd.DataFrame, n_bins: int, alpha: float)
                 pass
     return diff_sh, diff_sf, diff_hf
 
-def analyze_event_modulation(subject: str, session: str, label_filter: str = None) -> pd.DataFrame:
+def _load_merged_session(subject: str, session: str, hand: str | None = 'contra'):
+    """
+    Loads every event type of a session through load_multitaper_epochs (T-07) and merges
+    them into one tensor and one trials table, so the 3 action classes (steps, grasp_hook,
+    grasp_floor) can be compared together.
+
+    hand : {'contra', 'ipsi', None}, default 'contra'
+        Keeps only trials whose Hand is contralateral / ipsilateral to the implanted
+        hemisphere, or all trials if None. Replaces the old substring `label_filter`.
+
+    Raises ValueError if the merged event types were normalised differently (T-04b):
+    every event type of a session must share the same mu/sigma, otherwise a leftover
+    per-event reference mismatch would look like a small, constant power offset between
+    classes in the between-class tests these functions run.
+
+    Returns (mt_tensor, trials, freqs, times_s), or (None, None, None, None) if no .npz
+    file was found for any event type of this session.
+    """
+    if hand not in ('contra', 'ipsi', None):
+        raise ValueError(f"hand must be 'contra', 'ipsi' or None, got {hand!r}")
+
+    tensors, trials_list = [], []
+    freqs = times_s = None
+    ref_normalization = ref_robust = ref_mu = ref_sigma = None
+
+    for event_type in EVENT_SUFFIXES:
+        try:
+            data = load_multitaper_epochs(subject, session, event_type)
+        except FileNotFoundError:
+            continue
+
+        if freqs is None:
+            freqs, times_s = data['freqs'], data['times_s']
+
+        file_normalization = str(data['normalization'])
+        file_robust = bool(data['robust'])
+        file_mu, file_sigma = data['mu'], data['sigma']
+        if ref_normalization is None:
+            ref_normalization, ref_robust, ref_mu, ref_sigma = (
+                file_normalization, file_robust, file_mu, file_sigma
+            )
+        elif not (
+            file_normalization == ref_normalization
+            and file_robust == ref_robust
+            and np.array_equal(file_mu, ref_mu)
+            and np.array_equal(file_sigma, ref_sigma)
+        ):
+            raise ValueError(
+                f"The '{event_type}' .npz of {subject}/{session} was normalised "
+                f"differently from another event type of the same session "
+                f"(normalization/robust/mu/sigma do not match). Re-run stage 3 "
+                f"(extract_multitaper_epochs) for every event type of this session so "
+                f"they share the same session-level reference."
+            )
+
+        tensors.append(data['mt_tensor'])
+        trials_list.append(data['trials'])
+
+    if not tensors:
+        return None, None, None, None
+
+    mt_tensor = np.concatenate(tensors, axis=0)
+    trials = pd.concat(trials_list, ignore_index=True)
+
+    if hand is not None:
+        keep = trials['is_contralateral'] if hand == 'contra' else ~trials['is_contralateral']
+        mt_tensor = mt_tensor[keep.values]
+        trials = trials[keep.values].reset_index(drop=True)
+
+    return mt_tensor, trials, freqs, times_s
+
+def analyze_event_modulation(subject: str, session: str, hand: str | None = 'contra') -> pd.DataFrame:
     """
     Evaluates event-specific temporal modulation for each frequency band using 1-way RM ANOVA.
     Returns a DataFrame with channels, raw p-values, FDR-corrected p-values, and modulation flags.
     """
     bands_dict = FREQ_BANDS
     target_fs = MULTITAPER_PARAMS['target_fs']
-    window_s = MULTITAPER_PARAMS['window_taper_s']
     bin_size_ms = STATISTICAL_PARAMS['bin_size_ms']
     alpha = STATISTICAL_PARAMS['alpha']
     out_folder = PROCESSED_DATA_DIR / subject / session
-    
-    # 1. LOAD AND MERGE ALL MULTITAPER FILES
-    file_pattern = f"epoched_multitaper_*_{int(target_fs)}Hz_{int(window_s*1000)}ms.npz"
-    npz_files = list(out_folder.glob(file_pattern))
-    
-    if not npz_files:
-        print(f"[ERROR] No files found matching: {file_pattern}")
+
+    # 1. LOAD, JOIN AND MERGE EVERY EVENT TYPE (T-07)
+    mt_tensor, trials, freqs, times_s = _load_merged_session(subject, session, hand=hand)
+    if mt_tensor is None:
+        print(f"[ERROR] No multitaper .npz files found for {subject}/{session}")
         return pd.DataFrame()
-        
-    print(f"[INFO] Found {len(npz_files)} .npz files. Merging...")
-    
-    all_tensors, all_labels = [], []
-    freqs = None
-    
-    for file_path in npz_files:
-        with np.load(file_path, allow_pickle=True) as data:
-            all_tensors.append(data['mt_tensor'])
-            all_labels.append(data['labels'])
-            if freqs is None:
-                freqs = data['freqs']
-                
-    mt_tensor = np.concatenate(all_tensors, axis=0)
-    labels = np.concatenate(all_labels, axis=0)
-    
-    # 2. FILTER AND RE-LABEL INTO 3 ACTIONS
-    if label_filter is not None:
-        filter_mask = np.array([label_filter in str(l) for l in labels])
-        mt_tensor = mt_tensor[filter_mask]
-        labels = labels[filter_mask]
-    
-    new_labels, keep_mask = [], []
-    for lbl in labels:
-        lbl_str = str(lbl).lower()
-        if 'step' in lbl_str:
-            new_labels.append('steps')
-            keep_mask.append(True)
-        elif 'hook' in lbl_str:
-            new_labels.append('grasp_hook')
-            keep_mask.append(True)
-        elif 'floor' in lbl_str and 'step' not in lbl_str:
-            new_labels.append('grasp_floor')
-            keep_mask.append(True)
-        else:
-            keep_mask.append(False)
-            
-    keep_mask = np.array(keep_mask)
-    mt_tensor = mt_tensor[keep_mask]
-    labels = np.array(new_labels)
-    
+
+    labels = trials['action_class'].values
+
     unique, counts = np.unique(labels, return_counts=True)
     print(f"[INFO] Trials: {dict(zip(unique, counts))}")
-    
+
     num_trials, num_freqs, num_times, num_channels = mt_tensor.shape
     n_samples_per_bin = int((bin_size_ms / 1000.0) * target_fs)
     n_bins = num_times // n_samples_per_bin
     csv_records = []
-    
-    # 3. ANALYSIS LOOP (per band)
+
+    # 2. ANALYSIS LOOP (per band)
     for band_name, target_band in bands_dict.items():
         print(f"\n{'='*60}")
         print(f"  {band_name.upper()} band ({target_band[0]}-{target_band[1]} Hz)")
@@ -154,12 +185,12 @@ def analyze_event_modulation(subject: str, session: str, label_filter: str = Non
                 p_hook_raw.append(p_h)
                 p_floor_raw.append(p_f)
                 
-        # 4. FDR CORRECTION ACROSS CHANNELS
+        # 3. FDR CORRECTION ACROSS CHANNELS
         _, p_steps_fdr, _, _ = multipletests(np.nan_to_num(p_steps_raw, nan=1.0), alpha=alpha, method='fdr_bh')
         _, p_hook_fdr, _, _  = multipletests(np.nan_to_num(p_hook_raw, nan=1.0), alpha=alpha, method='fdr_bh')
         _, p_floor_fdr, _, _ = multipletests(np.nan_to_num(p_floor_raw, nan=1.0), alpha=alpha, method='fdr_bh')
         
-        # 5. RECORD RESULTS
+        # 4. RECORD RESULTS
         for ch in range(num_channels):
             is_mod_steps = p_steps_fdr[ch] < alpha
             is_mod_hook  = p_hook_fdr[ch] < alpha
@@ -185,7 +216,7 @@ def analyze_event_modulation(subject: str, session: str, label_filter: str = Non
         print(f"    - Grasp Hook: {np.sum(np.array(p_hook_fdr) < alpha)}")
         print(f"    - Grasp Floor: {np.sum(np.array(p_floor_fdr) < alpha)}")
    
-    # 6. SAVE MASTER CSV
+    # 5. SAVE MASTER CSV
     out_path = out_folder / "event_modulation_results.csv"
     
     if csv_records:
@@ -197,101 +228,34 @@ def analyze_event_modulation(subject: str, session: str, label_filter: str = Non
         print(f"\n[WARNING] No records found.")
         return pd.DataFrame()
     
-def analyze_selectivity(subject: str, session: str, label_filter: str = None) -> pd.DataFrame:
+def analyze_selectivity(subject: str, session: str, hand: str | None = 'contra') -> pd.DataFrame:
     """
     Strict Mixed ANOVA approach for 3 motor actions.
     """
     bands_dict = FREQ_BANDS
     target_fs = MULTITAPER_PARAMS['target_fs']
-    window_s = MULTITAPER_PARAMS['window_taper_s']
     bin_size_ms = STATISTICAL_PARAMS['bin_size_ms']
     alpha = STATISTICAL_PARAMS['alpha']
     out_folder = PROCESSED_DATA_DIR / subject / session
-    
-    # 1. LOAD AND MERGE ALL MULTITAPER FILES
-    file_pattern = f"epoched_multitaper_*_{int(target_fs)}Hz_{int(window_s*1000)}ms.npz"
-    npz_files = list(out_folder.glob(file_pattern))
-    
-    if not npz_files:
-        print(f"[ERROR] No files found matching: {file_pattern}")
+
+    # 1. LOAD, JOIN AND MERGE EVERY EVENT TYPE (T-07)
+    mt_tensor, trials, freqs, times_s = _load_merged_session(subject, session, hand=hand)
+    if mt_tensor is None:
+        print(f"[ERROR] No multitaper .npz files found for {subject}/{session}")
         return pd.DataFrame()
-        
-    print(f"[INFO] Found {len(npz_files)} .npz files. Merging...")
-    
-    all_tensors, all_labels = [], []
-    freqs = None
-    ref_normalization = ref_robust = ref_mu = ref_sigma = None
 
-    for file_path in npz_files:
-        with np.load(file_path, allow_pickle=True) as data:
-            all_tensors.append(data['mt_tensor'])
-            all_labels.append(data['labels'])
-            if freqs is None:
-                freqs = data['freqs']
+    labels = trials['action_class'].values
 
-            # Every event type of a session must share the same normalisation reference
-            # (T-04b): otherwise a leftover per-event mu/sigma mismatch would look like a
-            # small, constant power offset between classes in the between-class tests below.
-            file_normalization = str(data['normalization'])
-            file_robust = bool(data['robust'])
-            file_mu = data['mu']
-            file_sigma = data['sigma']
-            if ref_normalization is None:
-                ref_normalization, ref_robust, ref_mu, ref_sigma = (
-                    file_normalization, file_robust, file_mu, file_sigma
-                )
-            elif not (
-                file_normalization == ref_normalization
-                and file_robust == ref_robust
-                and np.array_equal(file_mu, ref_mu)
-                and np.array_equal(file_sigma, ref_sigma)
-            ):
-                raise ValueError(
-                    f"{file_path.name} was normalised differently from the other .npz "
-                    f"files of {subject}/{session} (normalization/robust/mu/sigma do not "
-                    f"match). Re-run stage 3 (extract_multitaper_epochs) for every event "
-                    f"type of this session so they share the same session-level reference."
-                )
-
-    mt_tensor = np.concatenate(all_tensors, axis=0)
-    labels = np.concatenate(all_labels, axis=0)
-
-    # 2. FILTER AND RE-LABEL INTO 3 ACTIONS
-    if label_filter is not None:
-        filter_mask = np.array([label_filter in str(l) for l in labels])
-        mt_tensor = mt_tensor[filter_mask]
-        labels = labels[filter_mask]
-
-    new_labels = []
-    keep_mask = []
-    for lbl in labels:
-        lbl_str = str(lbl).lower()
-        if 'step' in lbl_str:
-            new_labels.append('steps')
-            keep_mask.append(True)
-        elif 'hook' in lbl_str:
-            new_labels.append('grasp_hook')
-            keep_mask.append(True)
-        elif 'floor' in lbl_str and 'step' not in lbl_str:
-            new_labels.append('grasp_floor')
-            keep_mask.append(True)
-        else:
-            keep_mask.append(False)
-            
-    keep_mask = np.array(keep_mask)
-    mt_tensor = mt_tensor[keep_mask]
-    labels = np.array(new_labels)
-    
     unique, counts = np.unique(labels, return_counts=True)
     print(f"[INFO] Trials: {dict(zip(unique, counts))}")
-    
+
     num_trials, num_freqs, num_times, num_channels = mt_tensor.shape
     n_samples_per_bin = int((bin_size_ms / 1000.0) * target_fs)
     n_bins = num_times // n_samples_per_bin
     n_bins_800ms = int(800 / bin_size_ms)
     csv_records = []
-    
-    # 3. ANALYSIS LOOP (per band)
+
+    # 2. ANALYSIS LOOP (per band)
     for band_name, target_band in bands_dict.items():
         print(f"\n{'='*60}")
         print(f"  {band_name.upper()} band ({target_band[0]}-{target_band[1]} Hz)")
@@ -348,11 +312,11 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
                     'pair_hf_diff': pair_hf_diff,
                 })
         
-        # 4. FDR CORRECTION
+        # 3. FDR CORRECTION
         _, p_int_fdr, _, _ = multipletests(np.nan_to_num(p_int_raw, nan=1.0), alpha=alpha, method='fdr_bh')
         _, p_bin_fdr, _, _ = multipletests(np.nan_to_num(p_bin_raw, nan=1.0), alpha=alpha, method='fdr_bh')
         
-        # 5. RIGOROUS CLASSIFICATION (Relative Tuning)
+        # 4. RIGOROUS CLASSIFICATION (Relative Tuning)
         for ch in range(num_channels):
             r = channel_results[ch]
             diff_SH, diff_SF, diff_HF = r['pair_sh_diff'], r['pair_sf_diff'], r['pair_hf_diff']
@@ -401,7 +365,7 @@ def analyze_selectivity(subject: str, session: str, label_filter: str = None) ->
         for cat, count in sorted(cats.items()):
             print(f"    - {cat}: {count}")
    
-    # 6. SAVE MASTER CSV
+    # 5. SAVE MASTER CSV
     out_path = out_folder / "selectivity_results.csv"
     
     if csv_records:

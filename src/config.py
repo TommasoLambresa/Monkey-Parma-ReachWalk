@@ -1,6 +1,7 @@
 from pathlib import Path
+import pandas as pd
 
-# Base directory of the project 
+# Base directory of the project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Data directories
@@ -17,6 +18,21 @@ RESULTS_DIR = BASE_DIR / 'results'
 INTERIM_DATA_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Session registry: single source of truth for every session-level property
+# (hemisphere, channel count, ...). Nothing may be inferred from a session name instead.
+SESSION_METADATA_PATH = RAW_DATA_DIR.parent / 'session_metadata.csv'
+if not SESSION_METADATA_PATH.exists():
+    raise FileNotFoundError(
+        f"Session registry not found at {SESSION_METADATA_PATH}. See CLAUDE.md section 2."
+    )
+SESSION_METADATA = pd.read_csv(SESSION_METADATA_PATH).set_index('Session')
+if SESSION_METADATA.index.duplicated().any():
+    dupes = SESSION_METADATA.index[SESSION_METADATA.index.duplicated()].unique().tolist()
+    raise ValueError(f"Duplicate Session entries in {SESSION_METADATA_PATH}: {dupes}")
+if not SESSION_METADATA['Hemisphere'].isin(['L', 'R']).all():
+    bad = SESSION_METADATA.loc[~SESSION_METADATA['Hemisphere'].isin(['L', 'R'])]
+    raise ValueError(f"Unknown Hemisphere value(s) in {SESSION_METADATA_PATH}:\n{bad}")
 
 # Hardware and signal parameters
 FS_ORIGINAL = 32000.0  
