@@ -35,28 +35,16 @@ if not SESSION_METADATA['Hemisphere'].isin(['L', 'R']).all():
     raise ValueError(f"Unknown Hemisphere value(s) in {SESSION_METADATA_PATH}:\n{bad}")
 
 # Hardware and signal parameters
-FS_ORIGINAL = 32000.0  
+FS_ORIGINAL = 32000.0
 NUM_CHANNELS = 128
 FS_LFP = 1000.0
-FS_ENVELOPES = 200.0    
-DTYPE = 'float32'     
+DTYPE = 'float32'
 
 # Subjects and task definitions
 SUBJECTS = ['Router', 'Wifi']
 EVENT_SUFFIXES = {
     'steps': '_Steps.csv',
     'grasp': '_Grasp.csv'
-}
-
-GRASP_CONDITIONS = {
-    'hook_L': 1,  # reach up left
-    'hook_R': 2,  # reach up right
-    'floor_L': 3, # reach down left
-    'floor_R': 4  # reach down right
-}
-WALK_CONDITIONS = {
-    'step_start': 5, # Mapping for the beginning of a walking sequence
-    'step_end': 6    # Mapping for the end of a sequence
 }
 
 # Epoching parameters

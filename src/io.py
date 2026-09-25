@@ -122,7 +122,7 @@ def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
     CSV on event time. This is the only function that should read this .npz file.
 
     Returns a dict with the keys stored by src.preprocessing.extract_multitaper_epochs
-    ('mt_tensor', 'freqs', 'normalization', 'robust', 'mu', 'sigma',
+    ('mt_tensor', 'event_times_s', 'freqs', 'normalization', 'robust', 'mu', 'sigma',
     'n_reference_windows', 'normalization_seed', 'reference_centers_s',
     'excluded_artifact_times_s'), plus:
         times_s : (n_times,) array, the epoch time axis in seconds (0 at the event).

@@ -10,7 +10,12 @@ from src.config import (PROCESSED_DATA_DIR, FREQ_BANDS, MULTITAPER_PARAMS, STATI
 from src.io import load_multitaper_epochs
 
 def _get_p_val(res_df: pd.DataFrame, source_name: str) -> float:
-    """Helper to extract uncorrected p-value if available, else uncorrected."""
+    """
+    Reads the uncorrected p-value (pingouin's 'p_unc' column) for one ANOVA source
+    (e.g. 'Bin', 'Interaction') from a pingouin ANOVA results table. Returns NaN if
+    that source has no row in res_df, or if res_df has no 'p_unc' column at all
+    (e.g. the ANOVA could not be run, so the caller only got an empty/partial table).
+    """
     row = res_df[res_df['Source'] == source_name]
     if row.empty or 'p_unc' not in row.columns:
         return np.nan

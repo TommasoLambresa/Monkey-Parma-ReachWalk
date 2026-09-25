@@ -1,7 +1,7 @@
 %[text] ## **Matlab to binary converter**
 %[text] This script converts high-density, single-channel `.mat` recordings (e.g., 32 kHz microelectrode data) into a unified, multiplexed binary file (`.bin`). The output format is explicitly designed for seamless integration with Python's **SpikeInterface** via the `read_binary` function.
 %[text] **Core Functionalities**
-%[text] - **Memory Efficiency**: Processes high-frequency data in chunks to prevent RAM overflow.
+%[text] - **Memory Efficiency**: Reads and writes one channel's full signal at a time, so at most one channel is ever held in memory.
 %[text] - **Automated Mirroring**: Dynamically detects and replicates the input folder hierarchy (`Subject/Session/Wideband`) into the output directory.
 %[text] - **Native Multiplexing**: Leverages MATLAB's column-major `fwrite` to output interleaved binaries, ensuring direct compatibility with SpikeInterface.
 %[text] - **Safe Execution**: Automatically skips existing `.bin` files to prevent unintended overwrites. \
@@ -26,8 +26,7 @@ session_metadata = readtable(session_metadata_file, 'TextType', 'string');
 
 % Processing parameters
 num_channels = 128;
-dtype = 'single'; 
-chunk_size = 1e7; 
+dtype = 'single';
 %%
 %[text] ### Signals conversion
 % 1. Inspect subject directories
@@ -88,35 +87,67 @@ for s = 1:length(subjects) %[output:group:76499ba2]
         
         tmp = load(file_1);
         vars = fieldnames(tmp);
-        data_1 = tmp.(vars{1}); 
+        data_1 = tmp.(vars{1});
         num_samples = length(data_1);
-        
-        % Initialize binary file writing
-        fid = fopen(out_file, 'w');
-        num_chunks = ceil(num_samples / chunk_size);
-        
-        fprintf('Processing %s: %d samples', session_name, num_samples);
 
-        for c = 1:num_chunks
-            fprintf('Processing chunk: %03d/%03d', c, num_chunks);
-            start_idx = (c-1)*chunk_size + 1;
-            end_idx = min(c*chunk_size, num_samples);
-            current_chunk_samples = end_idx - start_idx + 1;
-            
-            % Preallocate chunk matrix [channels x samples]
-            chunk_data = zeros(num_channels, current_chunk_samples, dtype);
-            for ch = 1:num_channels
-                fprintf('\b\b\b%03d', ch);                
-                ch_file = fullfile(in_wideband_dir, sprintf('%s_%d.mat', session_name, ch));
-                tmp = load(ch_file);
-                vars2 = fieldnames(tmp);
-                sig = single(tmp.(vars2{1}));
-                chunk_data(ch, :) = sig(start_idx:end_idx);
-            end
-            % fwrite writes column by column, enabling multiplexed storage
-            fwrite(fid, chunk_data, dtype);
+        % Write each channel's full signal exactly once, instead of re-loading every
+        % channel from disk on every chunk (matfile partial reads do not help here: the
+        % source .mat files are not saved with -v7.3, so matfile silently loads the whole
+        % variable into memory on first access anyway - verified against a synthetic
+        % non-v7.3 file). fwrite's byte 'skip' places each channel directly into its
+        % interleaved column position, so only one full [channels x samples] buffer (the
+        % output file itself) exists on disk, never in memory.
+        %
+        % Two MATLAB I/O quirks the code below works around (verified empirically, not
+        % documented clearly): (1) fseek to a position beyond the current end of a file
+        % opened for writing fails silently (status -1, position unchanged), so the file
+        % must already be its final size before any interior fseek; it is pre-sized here
+        % with real zero-filled appends, in bounded chunks so this never holds the whole
+        % file in memory. (2) fwrite(...,skip) inserts the skip BEFORE every value it
+        % writes, including the first one in that call - so the first sample of each
+        % channel is written on its own (lands exactly where fseek put it), and only the
+        % remaining samples are written with skip.
+        bytes_per_sample = 4; % 'single'
+        total_bytes = num_channels * num_samples * bytes_per_sample;
+        skip_bytes = (num_channels - 1) * bytes_per_sample;
+        presize_chunk_bytes = 1e8;
+
+        fid = fopen(out_file, 'w');
+        bytes_written = 0;
+        while bytes_written < total_bytes
+            this_chunk = min(presize_chunk_bytes, total_bytes - bytes_written);
+            fwrite(fid, zeros(1, this_chunk, 'uint8'));
+            bytes_written = bytes_written + this_chunk;
         end
-        
+
+        fprintf('Processing %s: %d samples, %d channels\n', session_name, num_samples, num_channels);
+
+        data_1 = single(data_1(:));
+        fseek(fid, 0, 'bof');
+        fwrite(fid, data_1(1), dtype);
+        if numel(data_1) > 1
+            fwrite(fid, data_1(2:end), dtype, skip_bytes);
+        end
+        clear tmp data_1;
+
+        for ch = 2:num_channels
+            fprintf('Processing channel: %03d/%03d\n', ch, num_channels);
+            ch_file = fullfile(in_wideband_dir, sprintf('%s_%d.mat', session_name, ch));
+            tmp = load(ch_file);
+            vars2 = fieldnames(tmp);
+            sig = single(tmp.(vars2{1}));
+            sig = sig(:);
+            if numel(sig) ~= num_samples
+                error('Channel %d of %s has %d samples, expected %d (from channel 1).', ch, session_name, numel(sig), num_samples);
+            end
+            fseek(fid, (ch - 1) * bytes_per_sample, 'bof');
+            fwrite(fid, sig(1), dtype);
+            if numel(sig) > 1
+                fwrite(fid, sig(2:end), dtype, skip_bytes);
+            end
+            clear tmp sig;
+        end
+
         fclose(fid);
         fprintf('Saved binary to: %s\n\n', out_file);
     end

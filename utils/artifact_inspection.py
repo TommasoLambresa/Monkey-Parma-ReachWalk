@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import ipywidgets as widgets
 from IPython.display import display
 
-from src.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, EVENT_SUFFIXES, EPOCH_T_PRE, EPOCH_T_POST
+from src.config import RAW_DATA_DIR, PROCESSED_DATA_DIR, EVENT_SUFFIXES, EPOCH_T_PRE, EPOCH_T_POST, FS_LFP
 from src.io import load_lfp_recording
 
 def inspect_artifacts(subject: str, session: str, event_type: str = 'grasp', offset_uv: float = 200.0) -> None:
@@ -41,8 +41,26 @@ def inspect_artifacts(subject: str, session: str, event_type: str = 'grasp', off
     out_file = out_dir / f"bad_trials_{event_type}.csv"
     
     if out_file.exists():
+        # Resume by timestamp (within half a sample at FS_LFP), not by row position, so
+        # this still works if the event CSV was re-exported with a different row order.
         df_bad = pd.read_csv(out_file)
-        is_artifact = df_bad['is_artifact'].values.astype(bool)
+        tolerance_s = 0.5 / FS_LFP
+        is_artifact = np.zeros(num_trials, dtype=bool)
+        for bad_t, bad_flag in zip(df_bad['timestamp'].values, df_bad['is_artifact'].values.astype(bool)):
+            matches = np.flatnonzero(np.abs(timestamps - bad_t) <= tolerance_s)
+            if matches.size == 0:
+                raise ValueError(
+                    f"Stored bad_trials timestamp {bad_t} has no match in the current "
+                    f"{event_type} event table for {subject}/{session} within "
+                    f"{tolerance_s * 1000:.3f} ms."
+                )
+            if matches.size > 1:
+                raise ValueError(
+                    f"Stored bad_trials timestamp {bad_t} matches {matches.size} rows in "
+                    f"the current {event_type} event table for {subject}/{session} within "
+                    f"{tolerance_s * 1000:.3f} ms (expected exactly one)."
+                )
+            is_artifact[matches[0]] = bad_flag
     else:
         is_artifact = np.zeros(num_trials, dtype=bool)
 

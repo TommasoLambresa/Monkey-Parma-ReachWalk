@@ -116,12 +116,30 @@ def extract_multitaper_epochs(
     elif event_type == 'steps':
         timestamps = df_events['StepTime'].values
 
-    # Apply manual artifact mask for the current event type's own trials.
+    # Apply manual artifact mask for the current event type's own trials. Keyed by
+    # timestamp (within half a sample at FS_LFP), not by row position, so this survives
+    # a re-export of the event CSV with a different row order.
     bad_trials_file = PROCESSED_DATA_DIR / subject / session / f"bad_trials_{event_type}.csv"
     if bad_trials_file.exists():
         df_bad = pd.read_csv(bad_trials_file)
-        valid_mask = ~df_bad['is_artifact'].values.astype(bool)
-        timestamps = timestamps[valid_mask]
+        tolerance_s = 0.5 / FS_LFP
+        is_artifact_by_time = np.zeros(len(timestamps), dtype=bool)
+        for bad_t, bad_flag in zip(df_bad['timestamp'].values, df_bad['is_artifact'].values.astype(bool)):
+            matches = np.flatnonzero(np.abs(timestamps - bad_t) <= tolerance_s)
+            if matches.size == 0:
+                raise ValueError(
+                    f"bad_trials timestamp {bad_t} has no match in the {event_type} event "
+                    f"table for {subject}/{session} within {tolerance_s * 1000:.3f} ms."
+                )
+            if matches.size > 1:
+                raise ValueError(
+                    f"bad_trials timestamp {bad_t} matches {matches.size} rows in the "
+                    f"{event_type} event table for {subject}/{session} within "
+                    f"{tolerance_s * 1000:.3f} ms (expected exactly one)."
+                )
+            if bad_flag:
+                is_artifact_by_time[matches[0]] = True
+        timestamps = timestamps[~is_artifact_by_time]
 
     # Session-level artefact exclusion for reference windows: the union over every
     # bad_trials_<event>.csv of this session (currently grasp and steps), read by
