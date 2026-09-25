@@ -6,7 +6,7 @@ from scipy.stats import ttest_ind, ttest_1samp
 from tqdm import tqdm
 from collections import Counter
 import warnings
-from src.config import (PROCESSED_DATA_DIR, FREQ_BANDS, MULTITAPER_PARAMS, STATISTICAL_PARAMS, EVENT_SUFFIXES)
+from src.config import (PROCESSED_DATA_DIR, FREQ_BANDS, MULTITAPER_PARAMS, STATISTICAL_PARAMS, EVENT_SUFFIXES, N_BINS_PRE)
 from src.io import load_multitaper_epochs
 
 def _get_p_val(res_df: pd.DataFrame, source_name: str) -> float:
@@ -130,7 +130,8 @@ def analyze_event_modulation(subject: str, session: str, hand: str | None = 'con
 
     num_trials, num_freqs, num_times, num_channels = mt_tensor.shape
     n_samples_per_bin = int((bin_size_ms / 1000.0) * target_fs)
-    n_bins = num_times // n_samples_per_bin
+    n_bins = N_BINS_PRE
+    print(f"[INFO] Restricting analysis to the pre-movement window: {n_bins} bins of {bin_size_ms} ms.")
     csv_records = []
 
     # 2. ANALYSIS LOOP (per band)
@@ -138,18 +139,18 @@ def analyze_event_modulation(subject: str, session: str, hand: str | None = 'con
         print(f"\n{'='*60}")
         print(f"  {band_name.upper()} band ({target_band[0]}-{target_band[1]} Hz)")
         print(f"{'='*60}")
-        
+
         band_mask = (freqs >= target_band[0]) & (freqs <= target_band[1])
         power_band = np.mean(mt_tensor[:, band_mask, :, :], axis=1)
         power_band_trunc = power_band[:, :n_bins * n_samples_per_bin, :]
         power_binned = power_band_trunc.reshape(num_trials, n_bins, n_samples_per_bin, num_channels).mean(axis=2)
- 
+
         df_base = pd.DataFrame({
             'Trial': np.repeat(np.arange(num_trials), n_bins),
             'Event': np.repeat(labels, n_bins),
             'Bin':   np.tile(np.arange(n_bins), num_trials)
         })
-        
+
         mask_steps = df_base['Event'] == 'steps'
         mask_hook  = df_base['Event'] == 'grasp_hook'
         mask_floor = df_base['Event'] == 'grasp_floor'
@@ -251,8 +252,8 @@ def analyze_selectivity(subject: str, session: str, hand: str | None = 'contra')
 
     num_trials, num_freqs, num_times, num_channels = mt_tensor.shape
     n_samples_per_bin = int((bin_size_ms / 1000.0) * target_fs)
-    n_bins = num_times // n_samples_per_bin
-    n_bins_800ms = int(800 / bin_size_ms)
+    n_bins = N_BINS_PRE
+    print(f"[INFO] Restricting analysis to the pre-movement window: {n_bins} bins of {bin_size_ms} ms.")
     csv_records = []
 
     # 2. ANALYSIS LOOP (per band)
@@ -260,20 +261,18 @@ def analyze_selectivity(subject: str, session: str, hand: str | None = 'contra')
         print(f"\n{'='*60}")
         print(f"  {band_name.upper()} band ({target_band[0]}-{target_band[1]} Hz)")
         print(f"{'='*60}")
-        
+
         band_mask = (freqs >= target_band[0]) & (freqs <= target_band[1])
         power_band = np.mean(mt_tensor[:, band_mask, :, :], axis=1)
         power_band_trunc = power_band[:, :n_bins * n_samples_per_bin, :]
         power_binned = power_band_trunc.reshape(num_trials, n_bins, n_samples_per_bin, num_channels).mean(axis=2)
- 
-        # Keep only the premovement phase
-        power_binned = power_binned[:, :n_bins_800ms, :]
+
         df_base = pd.DataFrame({
-            'Trial': np.repeat(np.arange(num_trials), n_bins_800ms),
-            'Event': np.repeat(labels, n_bins_800ms),
-            'Bin':   np.tile(np.arange(n_bins_800ms), num_trials)
+            'Trial': np.repeat(np.arange(num_trials), n_bins),
+            'Event': np.repeat(labels, n_bins),
+            'Bin':   np.tile(np.arange(n_bins), num_trials)
         })
-        
+
         mask_steps = df_base['Event'] == 'steps'
         mask_hook  = df_base['Event'] == 'grasp_hook'
         mask_floor = df_base['Event'] == 'grasp_floor'
@@ -300,7 +299,7 @@ def analyze_selectivity(subject: str, session: str, hand: str | None = 'contra')
                     p_main_bin    = np.nan
 
                 # STEP B: Pairwise differences between events (Post-Hoc via Tukey-Kramer)
-                pair_sh_diff, pair_sf_diff, pair_hf_diff = _check_pairwise_diff_tukey(df_base, n_bins_800ms, alpha)
+                pair_sh_diff, pair_sf_diff, pair_hf_diff = _check_pairwise_diff_tukey(df_base, n_bins, alpha)
                 
                 # Append raw results
                 p_int_raw.append(p_interaction)

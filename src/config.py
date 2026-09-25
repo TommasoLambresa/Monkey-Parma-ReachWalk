@@ -91,3 +91,7 @@ STATISTICAL_PARAMS = {
     'bin_size_ms': 100,  # Size of time bins for analysis
 }
 
+# Number of 100 ms bins in the pre-movement window [-EPOCH_T_PRE, 0]. Statistics are
+# restricted to this window (no stable baseline exists in the freely moving context).
+N_BINS_PRE = int(round(EPOCH_T_PRE * 1000 / STATISTICAL_PARAMS['bin_size_ms']))
+
