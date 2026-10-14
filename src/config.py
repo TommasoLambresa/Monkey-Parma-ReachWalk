@@ -24,7 +24,7 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_METADATA_PATH = RAW_DATA_DIR.parent / 'session_metadata.csv'
 if not SESSION_METADATA_PATH.exists():
     raise FileNotFoundError(
-        f"Session registry not found at {SESSION_METADATA_PATH}. See CLAUDE.md section 2."
+        f"Session metadata registry not found at {SESSION_METADATA_PATH}."
     )
 SESSION_METADATA = pd.read_csv(SESSION_METADATA_PATH).set_index('Session')
 if SESSION_METADATA.index.duplicated().any():
