@@ -110,7 +110,7 @@ def extract_multitaper_epochs(
 
     # Only the event time is needed here. Every behavioural property (Hand, Target,
     # WalkNumber, ...) already lives in this CSV and is joined back in at load time by
-    # src.io.load_multitaper_epochs (T-07) instead of being copied into the .npz.
+    # src.io.load_multitaper_epochs, not copied into the .npz.
     if event_type == 'grasp':
         timestamps = df_events['EventTime'].values
     elif event_type == 'steps':

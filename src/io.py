@@ -11,8 +11,9 @@ def inspect_behavior() -> pd.DataFrame:
     Counts the behavioural events of every session in SESSION_METADATA, split by action
     class and by hand, in a single table covering all subjects.
 
-    Counts are read from the event CSVs, before stage 3 drops trials for artefacts or
-    epoch boundaries, so they are an upper bound on the trials available to the analyses.
+    Counts are read from the event CSVs, before extract_multitaper_epochs drops trials for
+    artefacts or epoch boundaries, so they are an upper bound on the trials available to
+    the analyses.
 
     Action classes:
         grasp_hook, grasp_floor : grasps split by 'Target'.
@@ -159,9 +160,9 @@ def load_lfp_recording(subject: str, session: str, folder_name: str) -> si.core.
 
 def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
     """
-    Loads one stage-3 .npz for (subject, session, event_type) and rebuilds the trial
-    metadata that T-07 stops duplicating on disk, by joining the .npz back to the event
-    CSV on event time. This is the only function that should read this .npz file.
+    Loads one multitaper .npz for (subject, session, event_type) and rebuilds the trial
+    metadata by joining the .npz to the event CSV on event time. This is the only function
+    that should read this .npz file.
 
     Returns a dict with the keys stored by src.preprocessing.extract_multitaper_epochs
     ('mt_tensor', 'event_times_s', 'freqs', 'normalization', 'robust', 'mu', 'sigma',
@@ -175,8 +176,8 @@ def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
               - 'action_class': one of 'steps', 'grasp_hook', 'grasp_floor'.
               - 'is_first_or_last_in_walk' (event_type == 'steps' only): True for the
                 first or last step of its WalkNumber, computed on the full event table
-                before stage 3's artefact/boundary exclusions, so a step that was the
-                true first of its walk is not miscounted just because an earlier step
+                before the artefact/boundary exclusions of extract_multitaper_epochs, so a step that
+                was the true first of its walk is not miscounted just because an earlier step
                 in that walk happened to be dropped.
     """
     target_fs = MULTITAPER_PARAMS['target_fs']
@@ -192,7 +193,8 @@ def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
     event_times_s = result['event_times_s']
 
     # 1. Load the full event CSV and compute row-level properties BEFORE the join, so
-    # trials dropped by stage 3 (artefact mask, epoch boundary) cannot affect them.
+    # trials dropped by extract_multitaper_epochs (artefact mask, epoch boundary) cannot
+    # affect them.
     events_dir = RAW_DATA_DIR / subject / session / "Events"
     csv_file = events_dir / f"{session}{EVENT_SUFFIXES[event_type]}"
     df_events = pd.read_csv(csv_file)
@@ -222,8 +224,8 @@ def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
     contralateral_hand = 'R' if hemisphere == 'L' else 'L'
     df_events['is_contralateral'] = df_events['Hand'] == contralateral_hand
 
-    # 2. Join event_times_s (the trials stage 3 kept, in tensor order) back onto the full
-    # event table, matching within half a sample at the LFP rate.
+    # 2. Join event_times_s (the trials extract_multitaper_epochs kept, in tensor order)
+    # back onto the full event table, matching within half a sample at the LFP rate.
     tolerance_s = 0.5 / FS_LFP
     event_time_values = df_events['event_time_s'].values
     row_indices = []
@@ -242,8 +244,7 @@ def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
         row_indices.append(matches[0])
     trials = df_events.iloc[row_indices].reset_index(drop=True)
 
-    # 3. Time axis (T-08 item 4): built once, here, from config, instead of being
-    # reconstructed independently by every caller.
+    # 3. Time axis: built once, here, from config, so every caller gets the same one.
     num_times = mt_tensor.shape[2]
     times_s = np.arange(num_times) / target_fs - EPOCH_T_PRE
     assert len(times_s) == mt_tensor.shape[2], "times_s length does not match the tensor's time axis"

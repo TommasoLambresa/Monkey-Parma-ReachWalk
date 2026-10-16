@@ -15,9 +15,9 @@ Paths are resolved in `src/config.py`; never hardcode a data path elsewhere.
 Run in order (entry points in `src/` and `utils/`; notebooks in `notebooks/` are thin
 drivers over them):
 
-| Stage                  | Entry point                                     | Input                     | Output                                                          |
+| Step                   | Entry point                                     | Input                     | Output                                                          |
 | ---------------------- | ----------------------------------------------- | ------------------------- | --------------------------------------------------------------- |
-| 0. Conversion (MATLAB) | `utils/from_matlab_to_binary_conversion.m`    | `raw_matlab/`           | `raw_binary/`                                                 |
-| 1. LFP extraction      | `src.preprocessing.extract_and_save_lfp`      | `raw_binary/*.bin`      | `interim/.../lfp_1000Hz`                                      |
-| 2. Artefact marking    | `utils.artifact_inspection.inspect_artifacts` | LFP + events              | `processed/.../bad_trials_<event>.csv`                        |
-| 3. Time-frequency      | `src.preprocessing.extract_multitaper_epochs` | LFP + events + bad trials | `processed/.../epoched_multitaper_<event>_<fs>Hz_<win>ms.npz` |
+| Conversion (MATLAB)    | `utils/from_matlab_to_binary_conversion.m`    | `raw_matlab/`           | `raw_binary/`                                                 |
+| LFP extraction         | `src.preprocessing.extract_and_save_lfp`      | `raw_binary/*.bin`      | `interim/.../lfp_1000Hz`                                      |
+| Artefact marking       | `utils.artifact_inspection.inspect_artifacts` | LFP + events              | `processed/.../bad_trials_<event>.csv`                        |
+| Time-frequency         | `src.preprocessing.extract_multitaper_epochs` | LFP + events + bad trials | `processed/.../epoched_multitaper_<event>_<fs>Hz_<win>ms.npz` |
