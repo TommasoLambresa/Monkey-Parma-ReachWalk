@@ -6,70 +6,112 @@ from src.config import (
 import numpy as np
 import pandas as pd
 
-def inspect_behavior(subject: str, session: str) -> None:
+def inspect_behavior() -> pd.DataFrame:
     """
-    Reads behavioral CSV files (Grasp and Steps) and prints a descriptive summary.
-    Adapts dynamically to the available columns in the datasets.
-    """
-    events_dir = RAW_DATA_DIR / subject / session / "Events"
-    steps_file = events_dir / f"{session}{EVENT_SUFFIXES['steps']}"
-    grasp_file = events_dir / f"{session}{EVENT_SUFFIXES['grasp']}"
-    
-    print(f"=== Behavior Summary: {subject} | {session} ===\n")
-    
-    # 1. Grasp Analysis
-    if grasp_file.exists():
-        df_grasp = pd.read_csv(grasp_file)
-        num_grasps = len(df_grasp)
-        print("[GRASP]")
-        print(f"  - Total grasps recorded: {num_grasps}")
-            
-        if 'Target' in df_grasp.columns and 'Hand' in df_grasp.columns:
-            print("  - Breakdown by Target and Hand:")
-            breakdown = df_grasp.groupby(['Target', 'Hand']).size().to_string(header=False)
-            print(f"    {breakdown.replace(chr(10), chr(10) + '    ')}")
-    else:
-        print("[GRASP]\n  - File not found.")
-        
-    print("\n" + "-"*45 + "\n")
-    
-    # 2. Walk/Steps Analysis
-    if steps_file.exists():
-        df_steps = pd.read_csv(steps_file)
-        print("[WALK]")
-        
-        num_walks = df_steps['WalkNumber'].nunique()
-        total_steps = len(df_steps)
-        
-        print(f"  - Total walks: {num_walks}")
-        print(f"  - Total individual steps: {total_steps}")
-        
-        if num_walks > 0:
-            # Calculate mean steps per walk (total steps / unique walks)
-            mean_steps = total_steps / num_walks
-            print(f"  - Mean steps per walk: {mean_steps:.1f}")
-            
-            # Calculate walk duration: max(StepTime) - min(StepTime) for each WalkNumber
-            walk_durations = df_steps.groupby('WalkNumber')['StepTime'].agg(lambda x: x.max() - x.min())
-            mean_walk_dur = walk_durations.mean()
-            print(f"  - Mean walk duration: {mean_walk_dur:.2f} s")
-            
-            # Breakdown by Surface
-            if 'Surface' in df_steps.columns:
-                print("  - Walks breakdown by Surface:")
-                # Group by walk and take the first surface to avoid counting every step
-                surface_counts = df_steps.groupby('WalkNumber')['Surface'].first().value_counts()
-                for surface, count in surface_counts.items():
-                    print(f"    - {surface}: {count} walks")
+    Counts the behavioural events of every session in SESSION_METADATA, split by action
+    class and by hand, in a single table covering all subjects.
 
-            # Breakdown by Hand
-            if 'Hand' in df_steps.columns:
-                print("  - Steps breakdown by Hand:")
-                hand_counts = df_steps['Hand'].value_counts()
-                for hand, count in hand_counts.items():
-                    print(f"    - {hand}: {count} steps")
-    else:
-        print("[WALK]\n  - File not found.")
+    Counts are read from the event CSVs, before stage 3 drops trials for artefacts or
+    epoch boundaries, so they are an upper bound on the trials available to the analyses.
+
+    Action classes:
+        grasp_hook, grasp_floor : grasps split by 'Target'.
+        first_step : the step with the earliest 'StepTime' of each 'WalkNumber', whatever
+            the hand (one per walk; same definition as 'is_first_in_walk' in
+            load_multitaper_epochs). Steps without a 'WalkNumber' are never counted here.
+        steps : every step event, first and last of each walk included.
+
+    Hand is expressed relative to the implanted hemisphere in SESSION_METADATA:
+    'contra' is the hand opposite to it, 'ipsi' the hand on the same side.
+
+    Returns
+    -------
+    summary : DataFrame
+        Rows indexed by (Subject, Session): one row per session, one (Subject, 'Total')
+        row after the sessions of each subject and a final ('All', 'Total') row.
+        Columns are a two-level index: ('Hemisphere', '') with the implanted hemisphere
+        (empty on total rows), then (action_class, hand) with the event counts.
+        If an event CSV is missing, its classes are empty (<NA>) for that session, the
+        totals skip it, and a message is printed.
+    """
+    class_names = ['grasp_hook', 'grasp_floor', 'first_step', 'steps']
+    hand_labels = ['contra', 'ipsi']
+    count_columns = pd.MultiIndex.from_product([class_names, hand_labels])
+
+    session_keys = []
+    session_counts = []
+    for session, session_info in SESSION_METADATA.iterrows():
+        subject = session_info['Subject']
+        contralateral_hand = 'R' if session_info['Hemisphere'] == 'L' else 'L'
+        events_dir = RAW_DATA_DIR / subject / session / "Events"
+        class_events = {}
+
+        grasp_file = events_dir / f"{session}{EVENT_SUFFIXES['grasp']}"
+        if grasp_file.exists():
+            df_grasp = pd.read_csv(grasp_file)
+            unrecognized = ~df_grasp['Target'].isin(['hook', 'floor'])
+            if unrecognized.any():
+                raise ValueError(
+                    f"Unrecognized Target value(s) in {grasp_file}: "
+                    f"{df_grasp.loc[unrecognized, 'Target'].unique().tolist()}"
+                )
+            class_events['grasp_hook'] = df_grasp[df_grasp['Target'] == 'hook']
+            class_events['grasp_floor'] = df_grasp[df_grasp['Target'] == 'floor']
+        else:
+            print(f"[{subject} | {session}] Grasp file not found: {grasp_file}")
+
+        steps_file = events_dir / f"{session}{EVENT_SUFFIXES['steps']}"
+        if steps_file.exists():
+            df_steps = pd.read_csv(steps_file)
+            n_unassigned = int(df_steps['WalkNumber'].isna().sum())
+            if n_unassigned > 0:
+                print(
+                    f"[{subject} | {session}] {n_unassigned} step(s) without WalkNumber: "
+                    f"counted in 'steps', never in 'first_step'."
+                )
+            walk_start_s = df_steps.groupby('WalkNumber')['StepTime'].transform('min')
+            class_events['first_step'] = df_steps[df_steps['StepTime'] == walk_start_s]
+            class_events['steps'] = df_steps
+        else:
+            print(f"[{subject} | {session}] Steps file not found: {steps_file}")
+
+        counts = pd.Series(pd.NA, index=count_columns, dtype='Int64')
+        for class_name, df_class in class_events.items():
+            unrecognized_hands = ~df_class['Hand'].isin(['L', 'R'])
+            if unrecognized_hands.any():
+                raise ValueError(
+                    f"Unrecognized Hand value(s) in {session} ({class_name}): "
+                    f"{df_class.loc[unrecognized_hands, 'Hand'].unique().tolist()}"
+                )
+            n_contra = int((df_class['Hand'] == contralateral_hand).sum())
+            counts[(class_name, 'contra')] = n_contra
+            counts[(class_name, 'ipsi')] = len(df_class) - n_contra
+
+        session_keys.append((subject, session))
+        session_counts.append(counts)
+
+    index_names = ['Subject', 'Session']
+    all_counts = pd.DataFrame(
+        session_counts, index=pd.MultiIndex.from_tuples(session_keys, names=index_names)
+    )
+
+    # Each subject's sessions followed by its total, then the total over all subjects.
+    blocks = []
+    for subject, subject_counts in all_counts.groupby(level='Subject', sort=False):
+        blocks.append(subject_counts)
+        blocks.append(pd.DataFrame(
+            [subject_counts.sum(min_count=1)],
+            index=pd.MultiIndex.from_tuples([(subject, 'Total')], names=index_names),
+        ))
+    blocks.append(pd.DataFrame(
+        [all_counts.sum(min_count=1)],
+        index=pd.MultiIndex.from_tuples([('All', 'Total')], names=index_names),
+    ))
+    summary = pd.concat(blocks).astype('Int64')
+
+    hemisphere = summary.index.get_level_values('Session').map(SESSION_METADATA['Hemisphere'])
+    summary.insert(0, ('Hemisphere', ''), hemisphere.fillna(''))
+    return summary
 
 def load_binary_session(subject: str, session: str) -> si.core.BinaryRecordingExtractor:
     """
