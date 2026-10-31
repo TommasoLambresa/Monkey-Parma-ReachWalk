@@ -179,6 +179,9 @@ def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
                 before the artefact/boundary exclusions of extract_multitaper_epochs, so a step that
                 was the true first of its walk is not miscounted just because an earlier step
                 in that walk happened to be dropped.
+              - 'is_first_in_walk' (event_type == 'steps' only): True for the step with the
+                earliest StepTime of its WalkNumber, whatever the hand, computed on the
+                full event table in the same way. Steps without a WalkNumber are False.
     """
     target_fs = MULTITAPER_PARAMS['target_fs']
     file_path = PROCESSED_DATA_DIR / subject / session / f"epoched_multitaper_{event_type}_{int(target_fs)}Hz_{int(MULTITAPER_PARAMS['window_taper_s']*1000)}ms.npz"
@@ -215,6 +218,7 @@ def load_multitaper_epochs(subject: str, session: str, event_type: str) -> dict:
         is_min = df_events[time_col].values == df_events['WalkNumber'].map(walk_extent['min']).values
         is_max = df_events[time_col].values == df_events['WalkNumber'].map(walk_extent['max']).values
         df_events['is_first_or_last_in_walk'] = is_min | is_max
+        df_events['is_first_in_walk'] = is_min
     else:
         raise ValueError(f"Unknown event_type {event_type!r}, expected 'grasp' or 'steps'.")
 
