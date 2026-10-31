@@ -79,6 +79,17 @@ STATISTICAL_PARAMS = {
     'bin_size_ms': 100,  # Size of time bins for analysis
 }
 
+# Distances between class maps (src.similarity). 'min_trials_per_class' follows the
+# per-session rule of Lanzarini et al. 2025; the other values are choices, not taken from
+# a reference.
+SIMILARITY_PARAMS = {
+    'n_repetitions': 100,  # random half-splits averaged into one cross-validated distance
+    'n_permutations': 1000,  # label permutations per null distribution
+    'min_trials_per_class': 5,  # pooled trials a class needs to be testable
+    'seed': 12345,
+    'n_jobs': -1,  # worker processes for the permutations (-1: all cores)
+}
+
 # Number of 100 ms bins in the pre-movement window [-EPOCH_T_PRE, 0]. Statistics are
 # restricted to this window (no stable baseline exists in the freely moving context).
 N_BINS_PRE = int(round(EPOCH_T_PRE * 1000 / STATISTICAL_PARAMS['bin_size_ms']))

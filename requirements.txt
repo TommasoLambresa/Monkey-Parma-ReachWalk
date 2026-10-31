@@ -1,3 +1,4 @@
+imageio==2.38.1
 ipykernel==7.3.0
 ipympl==0.10.0
 ipython==9.15.0
@@ -10,8 +11,12 @@ pandas==2.3.3
 pingouin==0.6.1
 probeinterface==0.3.2
 PyQt5==5.15.11
+rsatoolbox==0.3.2
+scikit-image==0.26.0
+scikit-learn==1.7.2
 scipy==1.17.1
 spikeinterface==0.104.0
 statsmodels==0.14.6
+tifffile==2026.10.15
 tqdm==4.67.3
 zarr==2.18.7
