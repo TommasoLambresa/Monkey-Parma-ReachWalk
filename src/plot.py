@@ -4,6 +4,7 @@ import ipywidgets as widgets
 from IPython.display import display
 from src.io import load_multitaper_epochs
 from src.config import FREQ_BANDS
+from utils.get_channel_geometry_mapping import get_channel_geometry_mapping
 
 def plot_interactive_multitaper(subject: str, session: str, event_type: str, hand: str | None = 'contra') -> None:
     """
@@ -249,4 +250,220 @@ def plot_population_heatmaps(subject: str, session: str, band: str, hand: str | 
     cbar.set_label(f"Normalized {band.capitalize()} Power (a.u.)", fontsize=11)
     
     plt.suptitle(f"{subject} / {session} | Population {band.capitalize()} Power", fontsize=16, fontweight='bold')
+    plt.show()
+
+
+def _band_time_map(mt_tensor: np.ndarray, freqs: np.ndarray, band: str, chunk: int = 16) -> np.ndarray:
+    """
+    Trial-averaged power of one frequency band, shape (n_times, n_channels).
+
+    The mean over trials is accumulated in chunks, so the (trials, band freqs, times, channels)
+    slice is never materialised in full (the steps tensors can be several GB).
+    """
+    low, high = FREQ_BANDS[band]
+    band_mask = (freqs >= low) & (freqs <= high)
+    if not band_mask.any():
+        raise ValueError(f"No frequency of the multitaper grid falls inside the {band} band {low}-{high} Hz.")
+    n_trials = mt_tensor.shape[0]
+    acc = np.zeros(mt_tensor.shape[2:], dtype=np.float64)  # (n_times, n_channels)
+    for start in range(0, n_trials, chunk):
+        block = mt_tensor[start:start + chunk][:, band_mask]        # (chunk, n_band_freqs, T, C)
+        acc += block.mean(axis=1, dtype=np.float64).sum(axis=0)
+    return acc / n_trials
+
+def plot_video_multitaper(
+    subject: str,
+    session: str,
+    event_type: str,
+    band: str = 'gamma',
+    hand: str | None = 'contra',
+    action_class: str | None = None,
+    vlim: float | None = None,
+    interval_ms: int = 50,
+) -> None:
+    """
+    Interactive "video" of the band power across the whole epoch (-EPOCH_T_PRE ... +EPOCH_T_POST s,
+    t=0 = contact), one frame per multitaper time sample.
+
+    The 128 channels are drawn as four 8x4 grids (2x2 layout: top-left, top-right, bottom-left,
+    bottom-right), one cell per electrode, placed according to utils.get_channel_geometry_mapping
+    (same physical layout as probe_layout.json). Array a owns the channels k with k % 4 == a,
+    as in utils.artifact_inspection.
+
+    Plotted values: the values stored in the .npz tensor (already normalised in
+    extract_multitaper_epochs), averaged first across the selected trials (one value per freq,
+    time, channel) and then across the frequencies of `band`. No further normalisation or baseline
+    subtraction is applied here; `vlim` only sets the colour scale. Below the grids, the mean of
+    each array over its channels is plotted over time, with a cursor that follows the current frame.
+
+    Controls: Play/Pause, a time slider and a band selector.
+
+    Parameters
+    ----------
+    event_type : {'steps', 'grasp'}
+        Which .npz to load.
+    band : key of FREQ_BANDS, initial band shown (can be changed from the GUI).
+    hand : {'contra', 'ipsi', None}, default 'contra'
+        Keeps only trials whose Hand is contralateral / ipsilateral to the implanted
+        hemisphere, or all trials if None.
+    action_class : {None, 'steps', 'grasp_hook', 'grasp_floor'}
+        Further restricts the trials, e.g. 'grasp_hook' when event_type='grasp'.
+    vlim : float or None
+        Symmetric colour limit (+/- vlim). If None, the 99th percentile of |mean power|
+        of the displayed band is used, recomputed when the band changes.
+    interval_ms : delay between frames during Play.
+    """
+    if band not in FREQ_BANDS:
+        raise ValueError(f"Unknown band {band!r}, expected one of {list(FREQ_BANDS)}")
+
+    try:
+        multitaper_dict = load_multitaper_epochs(subject, session, event_type)
+    except Exception as e:
+        print(f"Error loading data: {e}")
+        return
+
+    mt_tensor = multitaper_dict['mt_tensor']
+    trials = multitaper_dict['trials']
+    freqs = multitaper_dict['freqs']
+    time_vector = multitaper_dict['times_s']
+
+    keep = np.ones(len(trials), dtype=bool)
+    if hand is not None:
+        keep &= trials['is_contralateral'].values if hand == 'contra' else ~trials['is_contralateral'].values
+    if action_class is not None:
+        keep &= (trials['action_class'] == action_class).values
+    mt_tensor = mt_tensor[keep]
+
+    num_trials, _, num_times, num_channels = mt_tensor.shape
+    if num_trials == 0:
+        print(f"No trial found for hand='{hand}', action_class='{action_class}'.")
+        return
+    if num_channels != 128:
+        print(f"Expected 128 channels for the 2x2 array layout, found {num_channels}.")
+        return
+
+    # Physical layout: 4 arrays of 8x4 electrodes. grid_channels[a][r, c] = channel index.
+    mapping = get_channel_geometry_mapping()  # (16, 8)
+    array_names = ['top-left', 'top-right', 'bottom-left', 'bottom-right']
+    grid_channels = []
+    for a in range(4):
+        row0, col0 = (a // 2) * 8, (a % 2) * 4
+        grid = mapping[row0:row0 + 8, col0:col0 + 4]
+        assert (grid % 4 == a).all(), "Channel mapping inconsistent with the k % 4 array convention"
+        grid_channels.append(grid)
+
+    sample_period = float(np.median(np.diff(time_vector)))
+    zero_index = int(np.argmin(np.abs(time_vector)))
+
+    # Band maps are computed lazily and cached: (n_times, n_channels) per band.
+    band_maps = {}
+    def get_map(band_name: str) -> np.ndarray:
+        if band_name not in band_maps:
+            band_maps[band_name] = _band_time_map(mt_tensor, freqs, band_name)
+        return band_maps[band_name]
+
+    def color_limit(band_name: str) -> float:
+        if vlim is not None:
+            return float(vlim)
+        limit = float(np.percentile(np.abs(get_map(band_name)), 99))
+        return limit if limit > 0 else 1.0
+
+    state = {'band': band}
+    power_map = get_map(band)
+    limit = color_limit(band)
+
+    # --- Figure: 2x2 electrode grids + mean-trace panel ---
+    fig = plt.figure(figsize=(7, 7), layout='constrained')
+    grid_spec = fig.add_gridspec(3, 2, height_ratios=[2, 2, 1.3])
+    heat_axes = [fig.add_subplot(grid_spec[a // 2, a % 2]) for a in range(4)]
+    trace_ax = fig.add_subplot(grid_spec[2, :])
+
+    images = []
+    for a, ax in enumerate(heat_axes):
+        im = ax.imshow(
+            power_map[0][grid_channels[a]], cmap='RdBu_r', vmin=-limit, vmax=limit,
+            aspect='auto', interpolation='nearest'
+        )
+        images.append(im)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    cbar = fig.colorbar(images[0], ax=heat_axes, fraction=0.04, pad=0.02)
+    cbar.set_label(f"Normalized {band.capitalize()} power (z)", fontsize=10)
+
+    trace_lines = []
+    array_colors = ['tab:blue', 'tab:orange', 'tab:green', 'tab:purple']
+    for a in range(4):
+        line, = trace_ax.plot(time_vector, power_map[:, grid_channels[a].ravel()].mean(axis=1),
+                              color=array_colors[a], linewidth=1.2, label=array_names[a])
+        trace_lines.append(line)
+    global_line, = trace_ax.plot(time_vector, power_map.mean(axis=1), color='black', linewidth=2.2, label='All 128')
+    trace_ax.axvline(0.0, color='black', linestyle='--', linewidth=1)
+    cursor = trace_ax.axvline(time_vector[0], color='red', linewidth=1.5)
+    trace_ax.set_xlim(time_vector[0], time_vector[-1])
+    trace_ax.set_xlabel("Time [s]  (0 = contact)")
+    trace_ax.set_ylabel("Mean power (z)")
+    trace_ax.legend(ncol=5, fontsize=8, frameon=False, loc='lower right', bbox_to_anchor=(1.0, 1.0))
+
+    def refresh_trace_limits() -> None:
+        values = np.concatenate([l.get_ydata() for l in trace_lines + [global_line]])
+        margin = 0.1 * (values.max() - values.min() + 1e-9)
+        trace_ax.set_ylim(values.min() - margin, values.max() + margin)
+    refresh_trace_limits()
+
+    hand_str = f" | Hand: {hand}" if hand else " | All hands"
+    class_str = f" | {action_class}" if action_class else ""
+    suptitle = fig.suptitle("", fontsize=10, fontweight='bold')
+
+    def draw_frame(time_idx: int) -> None:
+        """Pure drawing step (no widget access), also used by FuncAnimation."""
+        current_map = band_maps[state['band']]
+        for a, im in enumerate(images):
+            im.set_data(current_map[time_idx][grid_channels[a]])
+        t = time_vector[time_idx]
+        cursor.set_xdata([t, t])
+        contact = "  ← contact" if time_idx == zero_index else ""
+        suptitle.set_text(
+            f"{subject} / {session} | {event_type}{class_str}{hand_str} | N={num_trials} | "
+            f"{state['band'].capitalize()} | t = {t:+.3f} s{contact}"
+        )
+
+    def apply_band(band_name: str) -> None:
+        state['band'] = band_name
+        current_map = get_map(band_name)
+        current_limit = color_limit(band_name)
+        for im in images:
+            im.set_clim(-current_limit, current_limit)
+        for a, line in enumerate(trace_lines):
+            line.set_ydata(current_map[:, grid_channels[a].ravel()].mean(axis=1))
+        global_line.set_ydata(current_map.mean(axis=1))
+        refresh_trace_limits()
+        cbar.set_label(f"Normalized {band_name.capitalize()} power (z)", fontsize=10)
+
+    # --- GUI widgets ---
+    play = widgets.Play(min=0, max=num_times - 1, step=1, value=0, interval=interval_ms,
+                        description="Play", show_repeat=True)
+    slider = widgets.IntSlider(min=0, max=num_times - 1, step=1, value=0, description='Time:',
+                               readout=False, continuous_update=True,
+                               layout=widgets.Layout(width='55%'))
+    time_label = widgets.Label(value="")
+    band_selector = widgets.Dropdown(options=list(FREQ_BANDS.keys()), value=band, description='Band:',
+                                     layout=widgets.Layout(width='160px'))
+    widgets.jslink((play, 'value'), (slider, 'value'))
+
+    def on_time_change(change=None) -> None:
+        idx = int(slider.value)
+        draw_frame(idx)
+        time_label.value = f" t = {time_vector[idx]:+.3f} s  (frame {idx + 1}/{num_times})"
+        fig.canvas.draw_idle()
+
+    def on_band_change(change) -> None:
+        time_label.value = f" Computing {change.new} map..."
+        apply_band(change.new)
+        on_time_change()
+
+    slider.observe(on_time_change, names='value')
+    band_selector.observe(on_band_change, names='value')
+
+    display(widgets.VBox([widgets.HBox([play, slider, band_selector]), time_label]))
+    on_time_change()
     plt.show()
